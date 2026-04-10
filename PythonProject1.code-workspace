@@ -1,0 +1,19 @@
+{
+	"folders": [
+		{
+			"name": "PythonProject1",
+			"path": "."
+		},
+		{
+			"path": "D:/自閉症/data"
+		}
+	],
+	"settings": {
+		"chat.tools.terminal.autoApprove": {
+			"/^python 01_prepare_dataset\\.py$/": {
+				"approve": true,
+				"matchCommandLine": true
+			}
+		}
+	}
+}

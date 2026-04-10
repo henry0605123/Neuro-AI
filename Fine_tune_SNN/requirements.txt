@@ -1,0 +1,91 @@
+# Whisper Speaker Diarization - Requirements
+# =============================================
+# 論文復現：Exploring Speech Foundation Models for Speaker Diarization
+# 
+# 安裝方式：
+# pip install -r requirements.txt
+#
+# 注意：請先安裝對應 CUDA 版本的 PyTorch：
+# CUDA 11.8: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+# CUDA 12.1: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# ==================== 核心依賴 ====================
+
+# PyTorch (請根據 CUDA 版本單獨安裝)
+# torch>=2.0.0
+# torchaudio>=2.0.0
+
+# Hugging Face Transformers (Whisper 模型)
+transformers>=4.36.0
+
+# OpenAI Whisper (音訊特徵提取)
+openai-whisper>=20231117
+
+# ==================== 音訊處理 ====================
+
+# 音訊載入與處理
+librosa>=0.10.0
+soundfile>=0.12.0
+
+# 音訊重採樣
+resampy>=0.4.2
+
+# FFmpeg Python 綁定
+ffmpeg-python>=0.2.0
+
+# ==================== 科學計算 ====================
+
+# NumPy
+numpy>=1.24.0
+
+# SciPy
+scipy>=1.10.0
+
+# Scikit-learn (評估指標)
+scikit-learn>=1.3.0
+
+# ==================== 視覺化 ====================
+
+# Matplotlib (訓練曲線、混淆矩陣、甘特圖)
+matplotlib>=3.7.0
+
+# Seaborn (進階視覺化)
+seaborn>=0.12.0
+
+# ==================== 進度條與工具 ====================
+
+# 進度條
+tqdm>=4.65.0
+
+# ==================== 資料處理 ====================
+
+# Pandas (資料分析)
+pandas>=2.0.0
+
+# ==================== 語者分離評估 ====================
+
+# PyAnnote (DER 計算)
+pyannote.core>=5.0.0
+pyannote.metrics>=3.2.0
+
+# ==================== ANN→SNN（Conv 頭，pipeline Step 4）====================
+
+snntorch>=0.7.0
+
+# ==================== 開發工具（可選）====================
+
+# Jupyter Notebook 支援
+# jupyter>=1.0.0
+# ipywidgets>=8.0.0
+
+# 程式碼格式化
+# black>=23.0.0
+# isort>=5.12.0
+
+# 類型檢查
+# mypy>=1.4.0
+
+# ==================== 測試（可選）====================
+
+# pytest>=7.4.0
+# pytest-cov>=4.1.0

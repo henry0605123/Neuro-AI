@@ -1,0 +1,60 @@
+{
+  "der": {
+    "total": 16.609078827726098,
+    "false_alarm": 5.771840246205498,
+    "missed_detection": 8.582220046163531,
+    "speaker_confusion": 2.255018535357068
+  },
+  "classification_report": {
+    "Child": {
+      "precision": 0.8996130320808888,
+      "recall": 0.9132241877439302,
+      "f1-score": 0.9063675122307044,
+      "support": 39458.0
+    },
+    "Adult": {
+      "precision": 0.9416403249379695,
+      "recall": 0.8650201392575014,
+      "f1-score": 0.9017055070954303,
+      "support": 32027.0
+    },
+    "Silence": {
+      "precision": 0.7149693365545438,
+      "recall": 0.7885728926466821,
+      "f1-score": 0.7499695411681572,
+      "support": 19515.0
+    },
+    "accuracy": 0.8695274725274725,
+    "macro avg": {
+      "precision": 0.8520742311911341,
+      "recall": 0.8556057398827046,
+      "f1-score": 0.8526808534980973,
+      "support": 91000.0
+    },
+    "weighted avg": {
+      "precision": 0.8748073880164612,
+      "recall": 0.8695274725274725,
+      "f1-score": 0.8711871117499019,
+      "support": 91000.0
+    }
+  },
+  "confusion_matrix": [
+    [
+      36034,
+      461,
+      2963
+    ],
+    [
+      1151,
+      27704,
+      3172
+    ],
+    [
+      2870,
+      1256,
+      15389
+    ]
+  ],
+  "total_frames": 91000,
+  "total_duration_seconds": 1820.0
+}

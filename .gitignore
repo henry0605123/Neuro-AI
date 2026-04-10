@@ -1,0 +1,122 @@
+# --- 模型權重與 checkpoint（不上傳）---
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx
+*.bin
+*.h5
+*.pb
+*.tflite
+*.mlmodel
+
+# 常見「整包模型目錄」名稱（若目錄裡還有其他要追蹤的檔案，可改為只忽略 *.pt 等）
+**/models/*.pt
+**/models/*.pth
+**/models/*.ckpt
+**/models/*.safetensors
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# 虛擬環境（Python venv / pip）
+.venv/
+venv/
+env/
+ENV/
+
+# Conda／Miniconda（若把環境建在專案目錄內才會出現）
+.conda/
+conda-env/
+conda_env/
+
+# 資料集與大型表格／序列（若有小檔必須納版，可用：git add -f 路徑）
+*.csv
+*.tsv
+*.parquet
+*.feather
+*.arrow
+*.jsonl
+*.npy
+*.npz
+
+# 常見「整包資料」目錄（依專案可增刪）
+/data/
+datasets/
+raw_data/
+
+# 各子專案本機資料（含切分後音訊／標註；勿進 Git）
+Fine_tune/data/
+Fine_tune/data_v2/
+Fine_tune_LSTM/data/
+
+# Playlogue：音訊與衍生標註（體積大／檔案多，勿進 Git）
+Playlogue/data/
+# 若希望連索引／切分表也不上傳，保留此列（需要納版時可刪除本列或改為只忽略 *.csv）
+Playlogue/metadata/
+
+# 音訊（通用）
+*.wav
+*.flac
+*.mp3
+*.m4a
+*.ogg
+
+# 語音對齊／說話人標註常見格式
+*.rttm
+*.ctm
+*.uem
+
+# --- 工具／IDE ---
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- 環境變數與敏感檔 ---
+.env
+.env.*
+!.env.example
+
+# --- 快取 ---
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.cache/
+
+# Hugging Face 本機快取（體積大）
+**/hub/
+**/transformers_cache/
+
+# 訓練 log 常見大檔（曲線圖、完整 history）
+**/logs/**/*.png
+**/logs/training_history.json
+
+# 實驗輸出圖表（.md 報告仍可納版；若要連報告都忽略可改為 **/outputs/）
+**/outputs/**/*.png
+**/outputs/**/*.jpg
+**/outputs/**/*.jpeg
+**/outputs/**/*.gif
+
+# 常見實驗／追蹤工具目錄
+wandb/
+mlruns/
+**/lightning_logs/
+
+# 大型壓縮與備份
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.7z
+*.rar

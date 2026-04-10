@@ -1,0 +1,37 @@
+# Pyannote Fine-tune 環境需求
+# ===========================
+# 使用方式: pip install -r requirements.txt
+
+# PyTorch (根據 CUDA 版本選擇適合的安裝方式)
+# 請先訪問 https://pytorch.org/get-started/locally/ 取得適合您系統的安裝指令
+torch>=2.0.0
+torchaudio>=2.0.0
+
+# Pyannote Audio
+pyannote.audio>=3.1.0
+
+# WhisperX
+# 建議從 GitHub 安裝最新版本:
+# pip install git+https://github.com/m-bain/whisperx.git
+whisperx
+
+# 音訊處理
+pydub>=0.25.1
+ffmpeg-python>=0.2.0
+
+# 資料處理
+pandas>=1.5.0
+numpy>=1.24.0
+
+# 深度學習訓練
+pytorch-lightning>=2.0.0
+tensorboard>=2.12.0
+
+# Hugging Face
+huggingface-hub>=0.16.0
+transformers>=4.30.0
+
+# 其他工具
+tqdm>=4.65.0
+pyyaml>=6.0
+python-dotenv>=1.0.0
