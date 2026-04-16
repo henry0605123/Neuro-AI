@@ -378,6 +378,7 @@ class Trainer:
                 "lora_rank": self.config.lora_rank,
                 "lora_alpha": self.config.lora_alpha,
                 "lora_dropout": self.config.lora_dropout,
+                "freeze_whisper_decoder": self.config.freeze_whisper_decoder,
             },
             "history": self.logger.history,
         }
@@ -535,8 +536,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--lr",
         type=float,
-        default=5e-4,
-        help="學習率"
+        default=1e-4,
+        help="學習率（Whisper-large+LoRA 建議勿高於 1e-4）"
     )
     parser.add_argument(
         "--lstm-hidden",

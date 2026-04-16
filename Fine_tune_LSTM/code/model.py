@@ -388,6 +388,13 @@ class WhisperBiLSTMModel(nn.Module):
         else:
             print("  Encoder 權重可訓練（未使用 LoRA）")
         
+        if getattr(config, "freeze_whisper_decoder", True):
+            print("  凍結 Whisper Decoder（僅 Encoder 特徵用於語者分類）")
+            for p in self.whisper.decoder.parameters():
+                p.requires_grad = False
+        else:
+            print("  Whisper Decoder 可訓練（一般不建議：前向未使用 decoder）")
+        
         # 下游網路
         self.weighted_avg = WeightedAverageLayer(self.num_encoder_layers)
         

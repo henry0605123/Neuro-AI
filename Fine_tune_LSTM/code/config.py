@@ -44,6 +44,9 @@ class Config:
     lora_alpha: int = 16
     lora_dropout: float = 0.05
     
+    # 本任務前向僅使用 Encoder；預設凍結 Decoder，避免巨量無用可訓練參數與梯度導致 loss 暴衝、val 卡在 ~37%
+    freeze_whisper_decoder: bool = True
+    
     # ==================== 音訊處理設定 ====================
     # 音訊窗口大小（秒）
     window_size: float = 20.0
@@ -59,10 +62,10 @@ class Config:
     
     # ==================== 訓練設定 ====================
     # 批次大小（與 medium_128_filter 實驗報告一致：Whisper-medium + Bi-LSTM hidden=128）
-    batch_size: int = 32
+    batch_size: int = 16
     
     # 學習率
-    learning_rate: float = 5e-4
+    learning_rate: float = 1e-4
     
     # 權重衰減
     weight_decay: float = 1e-3
@@ -84,7 +87,7 @@ class Config:
     lstm_num_layers: int = 2
     
     # Dropout 機率
-    dropout: float = 0.2
+    dropout: float = 0.4
     
     # 輸出類別數 (0: Child, 1: Adult, 2: Silence) - 3 分類任務
     num_classes: int = 3
@@ -99,20 +102,31 @@ class Config:
     # ==================== 資料路徑設定 ====================
     # 與 outputs/medium_128_filter/ANALYSIS_REPORT.md「1.3 資料集」一致：
     # 訓練資料為 Fine_tune 根目錄（每子資料夾 = 一個樣本），驗證集比例 25% 由 val_split_ratio 從訓練集隨機切分
-    train_data_dir: str = r"C:\Users\User\PycharmProjects\PythonProject1\Fine_tune_LSTM\data\playlogue_splits\train"
+    #train_data_dir: str = r"D:\自閉症\data\playlogue\playlogue_splits\train"
     # 若設為獨立 val 目錄則優先使用；None 表示依 val_split_ratio 從 train_data_dir 切分（與報告一致）
-    val_data_dir: str = r"C:\Users\User\PycharmProjects\PythonProject1\Fine_tune_LSTM\data\playlogue_splits\val"
+    #val_data_dir: str = r"D:\自閉症\data\playlogue\playlogue_splits\val"
     # 測試資料集根目錄（每子資料夾 = 一個 clip：音訊 + diarization.rttm）。勿把此路徑填進 test_audio_path。
-    test_data_dir: Optional[str] = (
-        r"C:\Users\User\PycharmProjects\PythonProject1\Fine_tune_LSTM\data\playlogue_splits\test"
-    )
+    #test_data_dir: Optional[str] = (
+    #    r"D:\自閉症\data\playlogue\playlogue_splits\test"
+    #)
     ## 單檔測試模式：僅在 test_data_dir 為 None 或 "" 時使用（須為 .wav/.mp3 等檔案，不可填資料夾）
-    test_audio_path: str = ""
-    test_srt_path: str = ""
+    #test_audio_path: str = ""
+    #test_srt_path: str = ""
 
-
+    ## 自閉症資料集
+    train_data_dir: str = r"D:\自閉症\data\Fine_tune"
+    # 獨立驗證目錄；None 或空字串則依 val_split_ratio 從 train_data_dir 切分
+    val_data_dir: Optional[str] = None
+    # 多 clip 測試根目錄；None 則走單檔 test_audio_path
+    test_data_dir: Optional[str] = None
+    test_audio_path: str = (
+        r"D:\自閉症\data\20250210-19683438吳忻芸\20250210-19683438吳忻芸.mp3"
+    )
+    test_srt_path: str = (
+        r"D:\自閉症\data\20250210-19683438吳忻芸\Aegisub.srt"
+    )
     # 單檔模式可指定單一 .rttm；多 clip 模式以各子資料夾內 diarization.rttm 為準（勿填目錄路徑）
-    #test_rttm_path: Optional[str] = None
+    test_rttm_path: Optional[str] = None
 
     # 測試資料集根目錄（每子資料夾 = 一個 clip：音訊 + 標註）；若未設定可用下方固定比例切分
     #test_data_dir: Optional[str] = None
@@ -296,6 +310,10 @@ class Config:
             print(f"    LoRA alpha: {self.lora_alpha}")
             print(f"    LoRA dropout: {self.lora_dropout}")
             print(f"    LoRA target_modules: fc1, fc2 (Encoder FFN)")
+        print(
+            f"  凍結 Whisper Decoder: "
+            f"{getattr(self, 'freeze_whisper_decoder', True)}"
+        )
         
         print(f"\n【音訊處理設定】")
         print(f"  窗口大小: {self.window_size} 秒")

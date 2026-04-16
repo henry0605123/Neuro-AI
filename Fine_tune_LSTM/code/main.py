@@ -292,6 +292,8 @@ def generate_report(config, train_summary, eval_results):
 | 權重衰減 | {config.weight_decay} |
 | 最大訓練 Epochs | {config.epochs} |
 | **分類類別數** | **3 (Child, Adult, Silence)** |
+| Encoder LoRA | {'啟用 (rank=' + str(config.lora_rank) + ')' if getattr(config, 'use_lora', False) else '停用'} |
+| 凍結 Whisper Decoder | {'是（建議）' if getattr(config, 'freeze_whisper_decoder', True) else '否'} |
 
 ### 1.2 Bi-LSTM 架構設定
 | 參數 | 值 |
@@ -328,6 +330,9 @@ def generate_report(config, train_summary, eval_results):
 
 ### 2.2 Loss 收斂情形
 訓練曲線圖已儲存至: `{config.log_dir}/training_curves.png`
+
+### 2.3 若驗證準確率突然掉到約 37% 且不再回升
+多為**訓練不穩定**（與「三類別亂猜約 33%」接近）：常見原因為 **學習率過高**、**Whisper Decoder 一併更新**、或 **AMP 數值問題**。請確認已使用較新版本程式之預設：**凍結 Decoder**、**較保守學習率（如 1e-4）**；必要時關閉 AMP（`use_amp=False`）或再降 LR。
 
 ---
 
@@ -517,7 +522,12 @@ def main():
         help="訓練 epochs（未指定時沿用 config.py 的 epochs）",
     )
     train_parser.add_argument("--batch-size", type=int, default=8, help="批次大小")
-    train_parser.add_argument("--lr", type=float, default=5e-4, help="學習率")
+    train_parser.add_argument(
+        "--lr",
+        type=float,
+        default=1e-4,
+        help="學習率（Whisper-large + LoRA 建議 1e-4～5e-5；過高易在第 3～4 epoch 崩潰）",
+    )
     train_parser.add_argument("--window-size", type=float, default=20.0, help="音訊窗口大小（秒）")
     train_parser.add_argument("--lstm-hidden", type=int, default=256, help="LSTM 隱藏層維度")
     train_parser.add_argument("--lstm-layers", type=int, default=2, help="LSTM 層數")
@@ -578,7 +588,12 @@ def main():
         help="訓練 epochs（未指定時沿用 config.py 的 epochs）",
     )
     pipeline_parser.add_argument("--batch-size", type=int, default=8, help="批次大小")
-    pipeline_parser.add_argument("--lr", type=float, default=5e-4, help="學習率")
+    pipeline_parser.add_argument(
+        "--lr",
+        type=float,
+        default=1e-4,
+        help="學習率（與 train 子命令相同預設）",
+    )
     pipeline_parser.add_argument("--window-size", type=float, default=20.0, help="音訊窗口大小（秒）")
     pipeline_parser.add_argument("--lstm-hidden", type=int, default=256, help="LSTM 隱藏層維度")
     pipeline_parser.add_argument("--lstm-layers", type=int, default=2, help="LSTM 層數")
