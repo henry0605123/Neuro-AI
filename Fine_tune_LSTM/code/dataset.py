@@ -9,10 +9,12 @@
              - 修復 BOM 解析問題
              - 移除 Overlap，改用 Last-Write-Wins 策略
              - 2026-03-24 - 支援 RTTM（Playlogue / NIST）；可與 SRT 並存時優先 RTTM
+             - 2026-04-09 - 支援編輯後 JSON（metadata.speaker_mapping + segments）；優先於 SRT、次於 RTTM
 """
 
 import os
 import re
+import json
 import random
 from pathlib import Path
 from typing import List, Tuple, Dict, Optional, Union
@@ -357,18 +359,136 @@ class RTTMParser:
         return self.segments
 
 
+# ==================== 編輯標註 JSON（自閉症資料集等）====================
+
+class EditedJSONParser:
+    """
+    讀取含 segments + metadata.speaker_mapping 的 JSON，輸出 SRTSegment 列表。
+
+    預期結構（範例）::
+        {
+          "metadata": {"speaker_mapping": {"SPEAKER_01": "兒童", "SPEAKER_03": "評估者"}},
+          "segments": [{"start": 0.0, "end": 1.5, "speaker": "SPEAKER_01", "text": "..."}]
+        }
+
+    語者角色經映射後標準化為與 SRT 一致之「小孩」「測試者」，供 FrameLabelGenerator 使用。
+    """
+
+    def __init__(self):
+        self.segments: List[SRTSegment] = []
+
+    @staticmethod
+    def _resolve_speaker_id(speaker_id: str, mapping: Dict[str, str]) -> Optional[str]:
+        if not speaker_id:
+            return None
+        sid = str(speaker_id).strip()
+        if sid in mapping:
+            return str(mapping[sid]).strip()
+        sid_lower = sid.lower()
+        for k, v in mapping.items():
+            if str(k).strip().lower() == sid_lower:
+                return str(v).strip()
+        return None
+
+    @staticmethod
+    def _role_to_srt_speaker(role: str) -> Optional[str]:
+        """將映射後角色（中文／英文）轉成與 SRTParser 一致之語者鍵。"""
+        if not role:
+            return None
+        t = str(role).strip()
+        tl = t.lower()
+
+        if tl == "child" or t in ("小孩", "兒童") or "兒童" in t or "小孩" in t:
+            return "小孩"
+        if tl in ("adult", "examiner", "tester", "teacher", "inv"):
+            return "測試者"
+        for kw in ("測試者", "大人", "成人", "評估者", "老師"):
+            if kw in t:
+                return "測試者"
+        return None
+
+    def parse_file(self, file_path: str) -> List[SRTSegment]:
+        self.segments = []
+        data: Optional[dict] = None
+        for encoding in ("utf-8-sig", "utf-8", "cp950", "big5"):
+            try:
+                with open(file_path, "r", encoding=encoding) as f:
+                    data = json.load(f)
+                break
+            except (UnicodeDecodeError, UnicodeError, json.JSONDecodeError, OSError):
+                continue
+        if not isinstance(data, dict):
+            raise ValueError(f"無法讀取 JSON 或格式錯誤: {file_path}")
+
+        raw_segments = data.get("segments")
+        if not isinstance(raw_segments, list):
+            raise ValueError(f"JSON 缺少 segments 陣列: {file_path}")
+
+        meta = data.get("metadata")
+        mapping: Dict[str, str] = {}
+        if isinstance(meta, dict) and isinstance(meta.get("speaker_mapping"), dict):
+            mapping = {str(k): str(v) for k, v in meta["speaker_mapping"].items()}
+
+        idx = 0
+        for item in raw_segments:
+            if not isinstance(item, dict):
+                continue
+            try:
+                start = float(item["start"])
+                end = float(item["end"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if end <= start:
+                continue
+
+            spk_raw = item.get("speaker", "")
+            role = self._resolve_speaker_id(str(spk_raw), mapping)
+            if role is None and spk_raw:
+                role = str(spk_raw).strip()
+
+            canon = self._role_to_srt_speaker(role) if role else None
+            if canon is None:
+                continue
+
+            text = str(item.get("text", "") or "")
+            idx += 1
+            self.segments.append(
+                SRTSegment(
+                    index=idx,
+                    start_time=start,
+                    end_time=end,
+                    speaker=canon,
+                    text=text,
+                )
+            )
+
+        if not self.segments:
+            raise ValueError(
+                f"JSON 未產生任何有效語者片段（請檢查 speaker_mapping 與 segments）: {file_path}"
+            )
+        return self.segments
+
+    def get_segments(self) -> List[SRTSegment]:
+        return self.segments
+
+
 def load_annotation_segments(
     sample: "AudioSample",
     srt_parser: SRTParser,
     rttm_parser: RTTMParser,
+    json_parser: Optional[EditedJSONParser] = None,
 ) -> List[SRTSegment]:
-    """若存在有效 RTTM 路徑則讀 RTTM，否則讀 SRT。"""
+    """優先順序：RTTM → JSON（若設定且檔案存在）→ SRT。"""
     if sample.rttm_path and os.path.isfile(sample.rttm_path):
         return rttm_parser.parse_file(sample.rttm_path)
+    jp = json_parser if json_parser is not None else EditedJSONParser()
+    json_path = getattr(sample, "json_path", None)
+    if json_path and os.path.isfile(json_path):
+        return jp.parse_file(json_path)
     if sample.srt_path and os.path.isfile(sample.srt_path):
         return srt_parser.parse_file(sample.srt_path)
     raise FileNotFoundError(
-        f"找不到標註檔（RTTM 或 SRT）: subject={sample.subject_id}"
+        f"找不到標註檔（RTTM、JSON 或 SRT）: subject={sample.subject_id}"
     )
 
 
@@ -559,7 +679,8 @@ class AudioSample:
     subject_id: str           # 受試者 ID
     audio_path: str           # 音訊檔案路徑
     srt_path: str             # SRT 標註檔案路徑（可為空字串，若僅使用 RTTM）
-    rttm_path: Optional[str] = None  # RTTM 路徑；若設定且檔案存在則優先於 SRT
+    rttm_path: Optional[str] = None  # RTTM 路徑；若設定且檔案存在則優先於 JSON/SRT
+    json_path: Optional[str] = None  # 編輯標註 JSON；存在時優先於 SRT（次於 RTTM）
     waveform: Optional[np.ndarray] = None  # 預載入的波形
     labels: Optional[np.ndarray] = None    # 預載入的標籤
     duration: float = 0.0     # 音訊時長
@@ -597,6 +718,7 @@ class SpeakerDiarizationDataset(Dataset):
         self.audio_processor = AudioProcessor(config.sample_rate)
         self.srt_parser = SRTParser()
         self.rttm_parser = RTTMParser()
+        self.json_parser = EditedJSONParser()
         self.label_generator = FrameLabelGenerator(config.step_size_ms)
         
         # 預先載入音訊與標籤
@@ -617,7 +739,7 @@ class SpeakerDiarizationDataset(Dataset):
                 sample.duration = duration
                 
                 segments = load_annotation_segments(
-                    sample, self.srt_parser, self.rttm_parser
+                    sample, self.srt_parser, self.rttm_parser, self.json_parser
                 )
                 sample.labels = self.label_generator.generate_labels(segments, duration)
                 
@@ -702,7 +824,7 @@ class SpeakerDiarizationDataset(Dataset):
             )
         else:
             segments = load_annotation_segments(
-                sample, self.srt_parser, self.rttm_parser
+                sample, self.srt_parser, self.rttm_parser, self.json_parser
             )
             full_labels = self.label_generator.generate_labels(segments, sample.duration)
             label_slice = self.label_generator.generate_labels_for_window(
@@ -721,7 +843,7 @@ class SpeakerDiarizationDataset(Dataset):
 
 def discover_training_samples_from_dir(train_dir: Path) -> List[AudioSample]:
     """
-    掃描單一根目錄下每個子資料夾：音訊 +（RTTM 優先，否則 SRT）。
+    掃描單一根目錄下每個子資料夾：音訊 +（RTTM 優先；其次 JSON；否則 SRT）。
     """
     samples: List[AudioSample] = []
     if not train_dir.exists():
@@ -779,13 +901,41 @@ def discover_training_samples_from_dir(train_dir: Path) -> List[AudioSample]:
             if srt_files:
                 srt_path = str(srt_files[0])
 
-        if rttm_path is None and srt_path is None:
-            print("    警告：找不到 RTTM 或 SRT 標註檔")
+        json_path: Optional[str] = None
+        edited_json = sorted(subject_folder.glob("*_edited.json"))
+        if edited_json:
+            preferred = [p for p in edited_json if subject_id in p.stem]
+            json_path = str(preferred[0] if preferred else edited_json[0])
+        if json_path is None:
+            for jname in ("annotation.json", "GTruth.json", "ground_truth.json"):
+                p = subject_folder / jname
+                if p.is_file():
+                    json_path = str(p)
+                    break
+        if json_path is None:
+            for p in sorted(subject_folder.glob("*.json")):
+                try:
+                    with open(p, encoding="utf-8-sig") as jf:
+                        jd = json.load(jf)
+                    if (
+                        isinstance(jd, dict)
+                        and isinstance(jd.get("segments"), list)
+                        and len(jd["segments"]) > 0
+                    ):
+                        json_path = str(p)
+                        break
+                except (OSError, json.JSONDecodeError, UnicodeError):
+                    continue
+
+        if rttm_path is None and json_path is None and srt_path is None:
+            print("    警告：找不到 RTTM、JSON 或 SRT 標註檔")
             continue
 
         print(f"    音訊: {os.path.basename(audio_path)}")
         if rttm_path:
             print(f"    RTTM: {os.path.basename(rttm_path)}")
+        if json_path:
+            print(f"    JSON: {os.path.basename(json_path)}")
         if srt_path:
             print(f"    SRT: {os.path.basename(srt_path)}")
 
@@ -795,6 +945,7 @@ def discover_training_samples_from_dir(train_dir: Path) -> List[AudioSample]:
                 audio_path=audio_path,
                 srt_path=srt_path or "",
                 rttm_path=rttm_path,
+                json_path=json_path,
             )
         )
 
@@ -1000,7 +1151,7 @@ def create_test_dataloader(config: Config) -> DataLoader:
         if len(samples) == 0:
             raise RuntimeError(
                 "test_data_dir 下沒有可用測試樣本（長度為 0）。每個子資料夾須含音訊檔（wav/mp3/…）"
-                "以及 RTTM 或 SRT。\n"
+                "以及 RTTM、JSON 或 SRT。\n"
                 f"目錄: {test_dir}\n"
                 "若目前只有 diarization.rttm 而無音訊，請將對應音檔放入各 clip 子資料夾，"
                 "或執行 Playlogue 的 prepare_playlogue_finetune_layout 以複製／連結音訊。"
@@ -1019,11 +1170,14 @@ def create_test_dataloader(config: Config) -> DataLoader:
     else:
         tr = getattr(config, "test_rttm_path", None)
         tr = tr.strip() if isinstance(tr, str) and tr.strip() else None
+        tj = getattr(config, "test_json_path", None)
+        tj = tj.strip() if isinstance(tj, str) and tj.strip() else None
         test_sample = AudioSample(
             subject_id="test",
             audio_path=config.test_audio_path,
             srt_path=config.test_srt_path or "",
             rttm_path=tr,
+            json_path=tj,
         )
         samples = [test_sample]
 
@@ -1073,6 +1227,7 @@ def analyze_dataset_statistics(config: Config):
     audio_processor = AudioProcessor(config.sample_rate)
     srt_parser = SRTParser()
     rttm_parser = RTTMParser()
+    json_parser = EditedJSONParser()
     label_generator = FrameLabelGenerator(config.step_size_ms)
     
     total_duration = 0.0
@@ -1084,7 +1239,7 @@ def analyze_dataset_statistics(config: Config):
     for sample in samples:
         try:
             waveform, duration = audio_processor.load_audio(sample.audio_path)
-            segments = load_annotation_segments(sample, srt_parser, rttm_parser)
+            segments = load_annotation_segments(sample, srt_parser, rttm_parser, json_parser)
             labels = label_generator.generate_labels(segments, duration)
             
             total_duration += duration

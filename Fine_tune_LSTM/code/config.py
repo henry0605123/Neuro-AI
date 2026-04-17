@@ -24,7 +24,7 @@ class Config:
     ==================
     
     可調整的主要參數：
-    - model_size: Whisper 模型大小 (tiny/base/small/medium/large)
+    - model_size: Whisper 模型大小 (tiny…large-v3、large-v3-turbo、large-turbo 等)
     - window_size: 音訊窗口大小（秒）
     - batch_size: 批次大小
     - learning_rate: 學習率
@@ -32,21 +32,19 @@ class Config:
     """
     
     # ==================== 模型設定 ====================
-    # Whisper 模型大小: "tiny", "base", "small", "medium", "large"
+    # Whisper 模型大小: tiny…large-v3；large-v3-turbo；large-turbo（同 large-v3-turbo）
     model_size: str = "medium"
     
     # 是否凍結 Whisper Encoder 的權重
     freeze_encoder: bool = True
-    
-    # LoRA（論文：凍結 Whisper encoder，於 FFN 的 fc1/fc2 使用 rank=16）
-    use_lora: bool = True
-    lora_rank: int = 16
-    lora_alpha: int = 16
+    # Whisper Encoder LoRA（與 train.py checkpoint、model.py 一致；未啟用時為凍結 Encoder + Bi-LSTM）
+    use_lora: bool = False
+    lora_rank: int = 32
+    lora_alpha: int = 32
     lora_dropout: float = 0.05
-    
-    # 本任務前向僅使用 Encoder；預設凍結 Decoder，避免巨量無用可訓練參數與梯度導致 loss 暴衝、val 卡在 ~37%
+    # 前向未使用 decoder；預設凍結以節省記憶體
     freeze_whisper_decoder: bool = True
-    
+
     # ==================== 音訊處理設定 ====================
     # 音訊窗口大小（秒）
     window_size: float = 20.0
@@ -62,10 +60,10 @@ class Config:
     
     # ==================== 訓練設定 ====================
     # 批次大小（與 medium_128_filter 實驗報告一致：Whisper-medium + Bi-LSTM hidden=128）
-    batch_size: int = 16
+    batch_size: int = 32
     
     # 學習率
-    learning_rate: float = 1e-4
+    learning_rate: float = 5e-4
     
     # 權重衰減
     weight_decay: float = 1e-3
@@ -87,7 +85,7 @@ class Config:
     lstm_num_layers: int = 2
     
     # Dropout 機率
-    dropout: float = 0.4
+    dropout: float = 0.2
     
     # 輸出類別數 (0: Child, 1: Adult, 2: Silence) - 3 分類任務
     num_classes: int = 3
@@ -102,51 +100,43 @@ class Config:
     # ==================== 資料路徑設定 ====================
     # 與 outputs/medium_128_filter/ANALYSIS_REPORT.md「1.3 資料集」一致：
     # 訓練資料為 Fine_tune 根目錄（每子資料夾 = 一個樣本），驗證集比例 25% 由 val_split_ratio 從訓練集隨機切分
-    #train_data_dir: str = r"D:\自閉症\data\playlogue\playlogue_splits\train"
+    #train_data_dir: str = r"C:\Users\User\PycharmProjects\PythonProject1\Fine_tune_LSTM\data\playlogue_splits\train"
     # 若設為獨立 val 目錄則優先使用；None 表示依 val_split_ratio 從 train_data_dir 切分（與報告一致）
-    #val_data_dir: str = r"D:\自閉症\data\playlogue\playlogue_splits\val"
+    #val_data_dir: str = r"C:\Users\User\PycharmProjects\PythonProject1\Fine_tune_LSTM\data\playlogue_splits\val"
     # 測試資料集根目錄（每子資料夾 = 一個 clip：音訊 + diarization.rttm）。勿把此路徑填進 test_audio_path。
     #test_data_dir: Optional[str] = (
-    #    r"D:\自閉症\data\playlogue\playlogue_splits\test"
+    #    r"C:\Users\User\PycharmProjects\PythonProject1\Fine_tune_LSTM\data\playlogue_splits\test"
     #)
     ## 單檔測試模式：僅在 test_data_dir 為 None 或 "" 時使用（須為 .wav/.mp3 等檔案，不可填資料夾）
     #test_audio_path: str = ""
     #test_srt_path: str = ""
 
-    ## 自閉症資料集
-    train_data_dir: str = r"D:\自閉症\data\Fine_tune"
-    # 獨立驗證目錄；None 或空字串則依 val_split_ratio 從 train_data_dir 切分
-    val_data_dir: Optional[str] = None
-    # 多 clip 測試根目錄；None 則走單檔 test_audio_path
-    test_data_dir: Optional[str] = None
-    test_audio_path: str = (
-        r"D:\自閉症\data\20250210-19683438吳忻芸\20250210-19683438吳忻芸.mp3"
-    )
-    test_srt_path: str = (
-        r"D:\自閉症\data\20250210-19683438吳忻芸\Aegisub.srt"
-    )
+
     # 單檔模式可指定單一 .rttm；多 clip 模式以各子資料夾內 diarization.rttm 為準（勿填目錄路徑）
     test_rttm_path: Optional[str] = None
 
     # 測試資料集根目錄（每子資料夾 = 一個 clip：音訊 + 標註）；若未設定可用下方固定比例切分
-    #test_data_dir: Optional[str] = None
+    test_data_dir: Optional[str] = None
 
     # 單檔測試模式（僅在 test_data_dir 為空且未啟用固定比例切分時使用）
-    #test_audio_path: str = ""
-    #test_srt_path: str = ""
+    test_audio_path: str = ""
+    test_srt_path: str = ""
+    # 單檔測試：編輯標註 JSON（與 test_audio_path 併用；標註優先 RTTM → JSON → SRT）
+    test_json_path: Optional[str] = None
 
     # 是否從 train_data_dir 以固定比例隨機切分 train/val/test（避免寫死單一 test_audio_path）
-    #enable_fixed_split_from_train_dir: bool = True
+    enable_fixed_split_from_train_dir: bool = True
     # 固定比例（train, val, test）
-    #train_val_test_ratio: Tuple[int, int, int] = (2, 1, 1)
+    train_val_test_ratio: Tuple[int, int, int] = (7, 2, 1)
     #
     # --- 改回「自閉症 / 原本」每受試者一資料夾 + SRT 時，可改為例如： ---
-    #train_data_dir = r"D:\自閉症\data\Fine_tune"
-    #val_data_dir = None
-    #test_data_dir = None
-    #test_audio_path = ""
-    #test_srt_path = ""
-    #test_rttm_path = None
+    train_data_dir = r"D:\自閉症\data\Fine_tune"
+    val_data_dir = None
+    test_data_dir = None
+    test_audio_path = ""
+    test_srt_path = ""
+    test_json_path = None
+    test_rttm_path = None
 
     # 輸出目錄
     output_dir: str = r"C:\Users\User\PycharmProjects\PythonProject1\Fine_tune_LSTM\outputs"
@@ -263,6 +253,9 @@ class Config:
     @property
     def whisper_model_name(self) -> str:
         """取得 Hugging Face 上的 Whisper 模型名稱"""
+        # HF 實際為 openai/whisper-large-v3-turbo（無 openai/whisper-large-turbo）
+        if self.model_size == "large-turbo":
+            return "openai/whisper-large-v3-turbo"
         return f"openai/whisper-{self.model_size}"
     
     @property
@@ -304,16 +297,6 @@ class Config:
         print(f"  Whisper 模型大小: {self.model_size}")
         print(f"  Hugging Face 模型名稱: {self.whisper_model_name}")
         print(f"  凍結 Encoder: {self.freeze_encoder}")
-        print(f"  Encoder LoRA: {self.use_lora}")
-        if self.use_lora:
-            print(f"    LoRA rank: {self.lora_rank}")
-            print(f"    LoRA alpha: {self.lora_alpha}")
-            print(f"    LoRA dropout: {self.lora_dropout}")
-            print(f"    LoRA target_modules: fc1, fc2 (Encoder FFN)")
-        print(
-            f"  凍結 Whisper Decoder: "
-            f"{getattr(self, 'freeze_whisper_decoder', True)}"
-        )
         
         print(f"\n【音訊處理設定】")
         print(f"  窗口大小: {self.window_size} 秒")
@@ -392,6 +375,8 @@ def get_config_for_model_size(model_size: str, **kwargs) -> Config:
         "large": 4,
         "large-v2": 4,
         "large-v3": 4,
+        "large-v3-turbo": 4,
+        "large-turbo": 4,
     }
     
     suggested_batch_size = batch_size_map.get(model_size, 8)

@@ -24,12 +24,24 @@ Whisper + Bi-LSTM 語者分離模型
 import os
 import sys
 import argparse
-import json
 from datetime import datetime
 from pathlib import Path
 
 import torch
 import numpy as np
+
+# 對應 Hugging Face：openai/whisper-{size}；large-turbo → large-v3-turbo（見 config.whisper_model_name）
+WHISPER_MODEL_SIZE_CHOICES = (
+    "tiny",
+    "base",
+    "small",
+    "medium",
+    "large",
+    "large-v2",
+    "large-v3",
+    "large-v3-turbo",
+    "large-turbo",
+)
 
 
 def add_lora_cli_group(parser: argparse.ArgumentParser) -> None:
@@ -179,6 +191,7 @@ def infer_command(args):
         config=config,
         srt_path=args.srt_path,
         rttm_path=args.rttm_path,
+        json_path=args.json_path,
         save_dir=args.output_dir or config.output_dir
     )
     
@@ -512,7 +525,7 @@ def main():
     train_parser = subparsers.add_parser("train", help="訓練模型")
     train_parser.add_argument(
         "--model-size", type=str, default="medium",
-        choices=["tiny", "base", "small", "medium", "large"],
+        choices=WHISPER_MODEL_SIZE_CHOICES,
         help="Whisper 模型大小"
     )
     train_parser.add_argument(
@@ -538,7 +551,7 @@ def main():
     eval_parser.add_argument("--model-path", type=str, required=True, help="模型權重路徑")
     eval_parser.add_argument(
         "--model-size", type=str, default="medium",
-        choices=["tiny", "base", "small", "medium", "large"],
+        choices=WHISPER_MODEL_SIZE_CHOICES,
         help="Whisper 模型大小"
     )
     eval_parser.add_argument("--lstm-hidden", type=int, default=256, help="LSTM 隱藏層維度")
@@ -557,11 +570,17 @@ def main():
     infer_parser.add_argument("--audio-path", type=str, required=True, help="音訊檔案路徑")
     infer_parser.add_argument("--srt-path", type=str, default=None, help="SRT 標註檔案路徑（可選）")
     infer_parser.add_argument("--rttm-path", type=str, default=None, help="RTTM 標註檔路徑（可選；與 SRT 皆提供時優先 RTTM）")
+    infer_parser.add_argument(
+        "--json-path",
+        type=str,
+        default=None,
+        help="編輯標註 JSON 路徑（可選；優先順序：RTTM → JSON → SRT）",
+    )
     infer_parser.add_argument("--output-srt", type=str, default=None, help="輸出 SRT 路徑")
     infer_parser.add_argument("--output-dir", type=str, default=None, help="輸出目錄")
     infer_parser.add_argument(
         "--model-size", type=str, default="medium",
-        choices=["tiny", "base", "small", "medium", "large"],
+        choices=WHISPER_MODEL_SIZE_CHOICES,
         help="Whisper 模型大小"
     )
     infer_parser.add_argument("--lstm-hidden", type=int, default=256, help="LSTM 隱藏層維度")
@@ -578,7 +597,7 @@ def main():
     pipeline_parser = subparsers.add_parser("pipeline", help="執行完整 pipeline（訓練+評估）")
     pipeline_parser.add_argument(
         "--model-size", type=str, default="medium",
-        choices=["tiny", "base", "small", "medium", "large"],
+        choices=WHISPER_MODEL_SIZE_CHOICES,
         help="Whisper 模型大小"
     )
     pipeline_parser.add_argument(

@@ -1252,6 +1252,7 @@ def inference_on_audio(
     config: Config,
     srt_path: Optional[str] = None,
     rttm_path: Optional[str] = None,
+    json_path: Optional[str] = None,
     save_dir: Optional[str] = None
 ) -> Dict:
     """
@@ -1262,7 +1263,8 @@ def inference_on_audio(
         audio_path: 音訊檔案路徑
         config: 配置
         srt_path: 標註檔案路徑（可選，SRT）
-        rttm_path: 標註檔案路徑（可選，RTTM；若與 srt 皆提供且存在，優先 RTTM）
+        rttm_path: 標註檔案路徑（可選，RTTM）
+        json_path: 編輯標註 JSON（可選；優先順序：RTTM → JSON → SRT）
         save_dir: 結果儲存目錄
         
     Returns:
@@ -1272,6 +1274,7 @@ def inference_on_audio(
         AudioProcessor,
         SRTParser,
         RTTMParser,
+        EditedJSONParser,
         FrameLabelGenerator,
         load_annotation_segments,
         AudioSample,
@@ -1288,22 +1291,25 @@ def inference_on_audio(
     
     # 建立資料集
     rttm_clean = rttm_path.strip() if isinstance(rttm_path, str) and rttm_path.strip() else None
+    json_clean = json_path.strip() if isinstance(json_path, str) and json_path.strip() else None
     sample = AudioSample(
         subject_id="inference",
         audio_path=audio_path,
         srt_path=srt_path if srt_path else "",
         rttm_path=rttm_clean,
+        json_path=json_clean,
     )
     sample.waveform = waveform
     sample.duration = duration
 
     if (rttm_clean and os.path.isfile(rttm_clean)) or (
-        srt_path and os.path.isfile(srt_path)
-    ):
+        json_clean and os.path.isfile(json_clean)
+    ) or (srt_path and os.path.isfile(srt_path)):
         srt_parser = SRTParser()
         rttm_parser = RTTMParser()
+        json_parser = EditedJSONParser()
         label_generator = FrameLabelGenerator(config.step_size_ms)
-        segments = load_annotation_segments(sample, srt_parser, rttm_parser)
+        segments = load_annotation_segments(sample, srt_parser, rttm_parser, json_parser)
         sample.labels = label_generator.generate_labels(segments, duration)
     
     dataset = SpeakerDiarizationDataset(
@@ -1478,6 +1484,12 @@ if __name__ == "__main__":
         default=None,
         help="RTTM 標註檔路徑（與 SRT 皆提供時優先 RTTM）"
     )
+    parser.add_argument(
+        "--json-path",
+        type=str,
+        default=None,
+        help="編輯標註 JSON（優先順序：RTTM → JSON → SRT）",
+    )
 
     args = parser.parse_args()
     
@@ -1495,6 +1507,7 @@ if __name__ == "__main__":
             config=config,
             srt_path=args.srt_path,
             rttm_path=args.rttm_path,
+            json_path=args.json_path,
             save_dir=config.output_dir
         )
     else:

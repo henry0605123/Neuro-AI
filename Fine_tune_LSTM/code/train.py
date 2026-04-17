@@ -518,7 +518,17 @@ if __name__ == "__main__":
         "--model-size",
         type=str,
         default="medium",
-        choices=["tiny", "base", "small", "medium", "large"],
+        choices=[
+            "tiny",
+            "base",
+            "small",
+            "medium",
+            "large",
+            "large-v2",
+            "large-v3",
+            "large-v3-turbo",
+            "large-turbo",
+        ],
         help="Whisper 模型大小"
     )
     parser.add_argument(
