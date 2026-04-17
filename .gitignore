@@ -120,3 +120,6 @@ mlruns/
 *.tgz
 *.7z
 *.rar
+
+# Ignore Slurm logs
+Fine_tune_LSTM/slurm_logs/

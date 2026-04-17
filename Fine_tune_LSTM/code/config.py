@@ -40,8 +40,8 @@ class Config:
     
     # LoRA（論文：凍結 Whisper encoder，於 FFN 的 fc1/fc2 使用 rank=16）
     use_lora: bool = True
-    lora_rank: int = 16
-    lora_alpha: int = 16
+    lora_rank: int = 32
+    lora_alpha: int = 32
     lora_dropout: float = 0.05
     
     # 本任務前向僅使用 Encoder；預設凍結 Decoder，避免巨量無用可訓練參數與梯度導致 loss 暴衝、val 卡在 ~37%
@@ -102,31 +102,31 @@ class Config:
     # ==================== 資料路徑設定 ====================
     # 與 outputs/medium_128_filter/ANALYSIS_REPORT.md「1.3 資料集」一致：
     # 訓練資料為 Fine_tune 根目錄（每子資料夾 = 一個樣本），驗證集比例 25% 由 val_split_ratio 從訓練集隨機切分
-    #train_data_dir: str = r"D:\自閉症\data\playlogue\playlogue_splits\train"
+    train_data_dir: str = r"/home/cball3535/playlogue/playlogue_splits/train"
     # 若設為獨立 val 目錄則優先使用；None 表示依 val_split_ratio 從 train_data_dir 切分（與報告一致）
-    #val_data_dir: str = r"D:\自閉症\data\playlogue\playlogue_splits\val"
+    val_data_dir: str = r"/home/cball3535/playlogue/playlogue_splits/val"
     # 測試資料集根目錄（每子資料夾 = 一個 clip：音訊 + diarization.rttm）。勿把此路徑填進 test_audio_path。
-    #test_data_dir: Optional[str] = (
-    #    r"D:\自閉症\data\playlogue\playlogue_splits\test"
-    #)
+    test_data_dir: Optional[str] = (
+        r"/home/cball3535/playlogue/playlogue_splits/test"
+    )
     ## 單檔測試模式：僅在 test_data_dir 為 None 或 "" 時使用（須為 .wav/.mp3 等檔案，不可填資料夾）
-    #test_audio_path: str = ""
-    #test_srt_path: str = ""
+    test_audio_path: str = ""
+    test_srt_path: str = ""
 
     ## 自閉症資料集
-    train_data_dir: str = r"D:\自閉症\data\Fine_tune"
+    #train_data_dir: str = r"D:\自閉症\data\Fine_tune"
     # 獨立驗證目錄；None 或空字串則依 val_split_ratio 從 train_data_dir 切分
-    val_data_dir: Optional[str] = None
+    #val_data_dir: Optional[str] = None
     # 多 clip 測試根目錄；None 則走單檔 test_audio_path
-    test_data_dir: Optional[str] = None
-    test_audio_path: str = (
-        r"D:\自閉症\data\20250210-19683438吳忻芸\20250210-19683438吳忻芸.mp3"
-    )
-    test_srt_path: str = (
-        r"D:\自閉症\data\20250210-19683438吳忻芸\Aegisub.srt"
-    )
+    #test_data_dir: Optional[str] = None
+    #test_audio_path: str = (
+    #    r"D:\自閉症\data\20250210-19683438吳忻芸\20250210-19683438吳忻芸.mp3"
+    #)
+    #test_srt_path: str = (
+    #    r"D:\自閉症\data\20250210-19683438吳忻芸\Aegisub.srt"
+    #)
     # 單檔模式可指定單一 .rttm；多 clip 模式以各子資料夾內 diarization.rttm 為準（勿填目錄路徑）
-    test_rttm_path: Optional[str] = None
+    #test_rttm_path: Optional[str] = None
 
     # 測試資料集根目錄（每子資料夾 = 一個 clip：音訊 + 標註）；若未設定可用下方固定比例切分
     #test_data_dir: Optional[str] = None
@@ -148,14 +148,14 @@ class Config:
     #test_srt_path = ""
     #test_rttm_path = None
 
-    # 輸出目錄
-    output_dir: str = r"C:\Users\User\PycharmProjects\PythonProject1\Fine_tune_LSTM\outputs"
-    
+    # Linux / H100 預設輸出路徑
+    output_dir: str = r"/home/cball3535/Neuro-AI/Fine_tune_LSTM/outputs"
+
     # 模型儲存目錄
-    model_save_dir: str = r"C:\Users\User\PycharmProjects\PythonProject1\Fine_tune_LSTM\models"
-    
+    model_save_dir: str = r"/home/cball3535/Neuro-AI/Fine_tune_LSTM/models"
+
     # 日誌目錄
-    log_dir: str = r"C:\Users\User\PycharmProjects\PythonProject1\Fine_tune_LSTM\logs"
+    log_dir: str = r"/home/cball3535/Neuro-AI/Fine_tune_LSTM/logs"
     
     # ==================== 硬體優化設定 ====================
     # DataLoader worker 數量（Linux 建議 4～8）

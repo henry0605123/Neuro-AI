@@ -16,10 +16,12 @@
 # torchaudio>=2.0.0
 
 # Hugging Face Transformers (Whisper 模型)
-transformers>=4.36.0
+# 目前在本專案與 torch 2.5.x / peft 0.13.x 驗證穩定，避免升到 5.x 造成相容性問題。
+transformers>=4.36.0,<5.0.0
 
 # LoRA 微調（Whisper Encoder FFN）
-peft>=0.7.0
+# 建議維持 0.13.x（已驗證），避免新版 dtype 相依導致 torch 屬性錯誤。
+peft>=0.13.0,<0.14.0
 
 # OpenAI Whisper (音訊特徵提取)
 openai-whisper>=20231117
