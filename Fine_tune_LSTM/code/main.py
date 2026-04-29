@@ -19,13 +19,19 @@ Whisper + Bi-LSTM 語者分離模型
 
 4. 完整 Pipeline（訓練 + 評估）：
    python main.py pipeline --model-size medium --epochs 15
+
+5. K-fold Pipeline（config.enable_kfold_cv=True 或加上 --kfold）：
+   python main.py pipeline --model-size medium --epochs 15 --kfold
 """
 
 import os
 import sys
+import json
 import argparse
+from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Dict, List
 
 import torch
 import numpy as np
@@ -69,6 +75,210 @@ def _config_lora_overrides(args) -> dict:
     if getattr(args, "use_lora", None) is None:
         return {}
     return {"use_lora": args.use_lora}
+
+
+def _build_pipeline_config(args, cfg_ref):
+    """合併 config.py 預設（cfg_ref）與 pipeline CLI 覆寫欄位。"""
+    from config import Config
+
+    extra: Dict[str, Any] = {}
+    pkf = getattr(args, "pipeline_use_kfold", None)
+    if pkf is not None:
+        extra["enable_kfold_cv"] = bool(pkf)
+    nf = getattr(args, "n_folds", None)
+    if nf is not None:
+        extra["n_folds"] = int(nf)
+    return Config(
+        model_size=args.model_size,
+        epochs=args.epochs if args.epochs is not None else cfg_ref.epochs,
+        batch_size=args.batch_size,
+        learning_rate=args.lr,
+        window_size=args.window_size,
+        lstm_hidden_size=args.lstm_hidden,
+        lstm_num_layers=args.lstm_layers,
+        median_filter_size=args.median_size,
+        **extra,
+        **_config_lora_overrides(args),
+    )
+
+
+def _pipeline_single_fold(config, args):
+    """單次訓練／驗證切分 + 固定測試集評估 + 單一報告。"""
+    from train import train_model
+    from dataset import create_test_dataloader
+    from evaluate import Evaluator
+
+    print("\n📌 Step 1: 訓練模型")
+    print("-" * 40)
+    model, train_summary = train_model(config)
+
+    print("\n📌 Step 2: 評估模型")
+    print("-" * 40)
+    test_loader = create_test_dataloader(config)
+    evaluator = Evaluator(config)
+    eval_results = evaluator.evaluate(
+        model=model,
+        data_loader=test_loader,
+        save_dir=config.output_dir,
+        apply_median_filter=args.use_median,
+    )
+
+    print("\n📌 Step 3: 生成報告")
+    print("-" * 40)
+    generate_report(config, train_summary, eval_results)
+    print("\n✅ Pipeline 完成！")
+    return {"training": train_summary, "evaluation": eval_results}
+
+
+def pipeline_kfold_command(config, args):
+    """
+    K-fold：每折獨立訓練與驗證切分。
+    - 若 train_val_test_ratio 第三項 > 0：各折在「同一固定測試集」上評估後平均。
+    - 若第三項 = 0：不保留測試桶，改在各折的「該折驗證集」上評估後平均（無獨立測試集）。
+    不另選整體最佳折作為唯一輸出。
+    """
+    from train import train_model
+    from dataset import (
+        _normalize_ratio,
+        create_dataloaders_from_sample_lists,
+        create_test_dataloader,
+        get_kfold_train_val_samples,
+    )
+    from evaluate import Evaluator
+
+    n_folds = int(getattr(config, "n_folds", 5))
+    base_out = config.output_dir
+    base_log = config.log_dir
+    base_model = config.model_save_dir
+
+    ratio = _normalize_ratio(config)
+    eval_on_per_fold_val_only = ratio[2] == 0
+
+    print("\n" + "=" * 60)
+    print(f"🔄 K-fold Pipeline（{n_folds} 折交叉驗證）")
+    print("=" * 60)
+    print(
+        "每折權重與圖表寫入各子目錄 kfold_fold{k}；"
+        f"彙總報告與 JSON 寫入: {base_out}"
+    )
+    if eval_on_per_fold_val_only:
+        print(
+            "\nℹ️  train_val_test_ratio 測試份額為 0：不建立獨立測試集；"
+            "彙總 DER 為各折在「該折驗證集」上之結果再平均（與單一固定測試集模式不同）。"
+        )
+        test_loader = None
+    else:
+        test_loader = create_test_dataloader(config)
+
+    fold_rows: List[Dict[str, Any]] = []
+    fold_summaries: List[Dict[str, Any]] = []
+
+    for fold in range(n_folds):
+        print("\n" + "=" * 60)
+        print(f"📂 第 {fold + 1} / {n_folds} 折")
+        print("=" * 60)
+
+        fold_config = replace(
+            config,
+            model_save_dir=os.path.join(base_model, f"kfold_fold{fold}"),
+            log_dir=os.path.join(base_log, f"kfold_fold{fold}"),
+            output_dir=os.path.join(base_out, f"kfold_fold{fold}"),
+            kfold_fold_index=fold,
+        )
+        for d in (fold_config.model_save_dir, fold_config.log_dir, fold_config.output_dir):
+            os.makedirs(d, exist_ok=True)
+
+        seed_f = int(config.seed) + fold
+        torch.manual_seed(seed_f)
+        np.random.seed(seed_f)
+
+        train_samples, val_samples = get_kfold_train_val_samples(config, fold)
+        train_loader, val_loader = create_dataloaders_from_sample_lists(
+            fold_config,
+            train_samples,
+            val_samples,
+            split_message=f"\nK-fold 折 {fold + 1}/{n_folds}：訓練 {len(train_samples)} 樣本 / 驗證 {len(val_samples)} 樣本",
+        )
+
+        model, summary = train_model(
+            fold_config,
+            train_loader,
+            val_loader,
+            print_config=(fold == 0),
+        )
+        fold_summaries.append(summary)
+
+        evaluator = Evaluator(fold_config)
+        eval_loader = val_loader if eval_on_per_fold_val_only else test_loader
+        eval_results = evaluator.evaluate(
+            model=model,
+            data_loader=eval_loader,
+            save_dir=fold_config.output_dir,
+            apply_median_filter=args.use_median,
+        )
+        der = eval_results["der"]
+        fold_rows.append(
+            {
+                "fold": fold,
+                "der": float(der.der),
+                "false_alarm": float(der.false_alarm),
+                "missed_detection": float(der.missed_detection),
+                "speaker_confusion": float(der.speaker_confusion),
+            }
+        )
+
+        model.cpu()
+        del model
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    keys = ["der", "false_alarm", "missed_detection", "speaker_confusion"]
+    aggregate = {}
+    for k in keys:
+        vals = np.array([r[k] for r in fold_rows], dtype=np.float64)
+        aggregate[f"{k}_mean"] = float(vals.mean())
+        aggregate[f"{k}_std"] = float(vals.std(ddof=1)) if len(vals) > 1 else 0.0
+
+    summary_path = Path(base_out) / "kfold_summary.json"
+    Path(base_out).mkdir(parents=True, exist_ok=True)
+    split_note = (
+        "train_val_test_ratio 第三項為 0：各折 DER 在該折驗證集上計算後平均（無獨立測試集）。"
+        if eval_on_per_fold_val_only
+        else "各折使用相同固定測試集（與單次 pipeline 之 create_test_dataloader 一致）。"
+    )
+    with open(summary_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "n_folds": n_folds,
+                "folds": fold_rows,
+                "aggregate": aggregate,
+                "eval_metric_source": (
+                    "per_fold_validation" if eval_on_per_fold_val_only else "held_out_test"
+                ),
+                "test_split_note": split_note,
+            },
+            f,
+            indent=2,
+            ensure_ascii=False,
+        )
+    print(f"\n📄 K-fold 彙總 JSON: {summary_path}")
+
+    generate_report_kfold(
+        config=config,
+        fold_rows=fold_rows,
+        fold_summaries=fold_summaries,
+        aggregate=aggregate,
+        use_median=bool(args.use_median),
+        report_dir=base_out,
+        eval_on_per_fold_val_only=eval_on_per_fold_val_only,
+    )
+    done_msg = (
+        "報告為各折驗證集指標之平均（無獨立測試集），非單選最佳折。"
+        if eval_on_per_fold_val_only
+        else "報告為各折測試集指標之平均，非單選最佳折。"
+    )
+    print(f"\n✅ K-fold Pipeline 完成（{done_msg}）")
+    return {"kfold_folds": fold_rows, "aggregate": aggregate, "summaries": fold_summaries}
 
 
 def setup_environment():
@@ -212,60 +422,137 @@ def infer_command(args):
 
 
 def pipeline_command(args):
-    """執行完整 Pipeline（訓練 + 評估）"""
+    """執行完整 Pipeline（訓練 + 評估）；若 config 或 CLI 啟用 K-fold 則改跑五折流程。"""
     from config import Config
-    from train import train_model
-    from dataset import create_test_dataloader
-    from evaluate import Evaluator
-    
+
     print("\n" + "=" * 60)
     print("🔄 執行完整 Pipeline (Whisper + Bi-LSTM)")
     print("=" * 60)
-    
+
     cfg_ref = Config()
-    config = Config(
-        model_size=args.model_size,
-        epochs=args.epochs if args.epochs is not None else cfg_ref.epochs,
-        batch_size=args.batch_size,
-        learning_rate=args.lr,
-        window_size=args.window_size,
-        lstm_hidden_size=args.lstm_hidden,
-        lstm_num_layers=args.lstm_layers,
-        median_filter_size=args.median_size,
-        **_config_lora_overrides(args),
+    config = _build_pipeline_config(args, cfg_ref)
+
+    if getattr(config, "enable_kfold_cv", False):
+        return pipeline_kfold_command(config, args)
+    return _pipeline_single_fold(config, args)
+
+
+def generate_report_kfold(
+    config,
+    fold_rows: List[Dict[str, Any]],
+    fold_summaries: List[Dict[str, Any]],
+    aggregate: Dict[str, float],
+    use_median: bool,
+    report_dir: str,
+    *,
+    eval_on_per_fold_val_only: bool = False,
+) -> None:
+    """K-fold 彙總報告：各折 DER 等之平均 ± 標準差（不選整體最佳折）。"""
+    report_path = Path(report_dir) / "ANALYSIS_REPORT.md"
+    Path(report_dir).mkdir(parents=True, exist_ok=True)
+
+    if getattr(config, "test_data_dir", None):
+        test_data_source = str(config.test_data_dir)
+    elif getattr(config, "enable_fixed_split_from_train_dir", False) and not (
+        getattr(config, "test_audio_path", "") or ""
+    ).strip():
+        ratio = getattr(config, "train_val_test_ratio", (2, 1, 1))
+        test_data_source = (
+            f"由 train_data_dir 固定比例隨機切分 (train/val/test = {ratio[0]}/{ratio[1]}/{ratio[2]})"
+        )
+    else:
+        test_data_source = config.test_audio_path
+
+    rows_md = "\n".join(
+        f"| {r['fold'] + 1} | {r['der']:.2f}% | {r['false_alarm']:.2f}% | {r['missed_detection']:.2f}% | {r['speaker_confusion']:.2f}% |"
+        for r in fold_rows
     )
-    
-    # Step 1: 訓練
-    print("\n📌 Step 1: 訓練模型")
-    print("-" * 40)
-    model, train_summary = train_model(config)
-    
-    # Step 2: 評估
-    print("\n📌 Step 2: 評估模型")
-    print("-" * 40)
-    
-    test_loader = create_test_dataloader(config)
-    
-    evaluator = Evaluator(config)
-    eval_results = evaluator.evaluate(
-        model=model,
-        data_loader=test_loader,
-        save_dir=config.output_dir,
-        apply_median_filter=args.use_median
+
+    best_val_losses = [s.get("best_val_loss", 0.0) for s in fold_summaries if s]
+    mean_bvl = float(np.mean(best_val_losses)) if best_val_losses else 0.0
+    std_bvl = float(np.std(best_val_losses, ddof=1)) if len(best_val_losses) > 1 else 0.0
+
+    eval_bullet = (
+        "- **最終指標**: `train_val_test_ratio` 第三項為 **0**（無獨立測試桶）。各折在**該折驗證集**上計算 DER 等後，取**算術平均 ± 樣本標準差**（與「同一固定測試集」模式不同；驗證集亦用於該折內 early stopping，解讀時略偏樂觀屬常見限制）。\n"
+        "- **不**以整體最佳折作為唯一代表模型。"
+        if eval_on_per_fold_val_only
+        else "- **最終指標**: 各折在**同一固定測試集**上計算 DER 等指標後，取**算術平均 ± 樣本標準差**；**不**以整體最佳折作為唯一代表模型。\n"
     )
-    
-    # Step 3: 生成報告
-    print("\n📌 Step 3: 生成報告")
-    print("-" * 40)
-    
-    generate_report(config, train_summary, eval_results)
-    
-    print("\n✅ Pipeline 完成！")
-    
-    return {
-        "training": train_summary,
-        "evaluation": eval_results,
-    }
+    metric_target = "該折驗證集" if eval_on_per_fold_val_only else "固定測試集"
+    section2_title = "各折於「該折驗證集」之 DER 分量" if eval_on_per_fold_val_only else "各折於固定測試集之 DER 分量"
+    section3_caption = "五折平均 ± 標準差（主要輸出）"
+    sec4_ref = "第 3 節「平均」" if eval_on_per_fold_val_only else "第 3 節「測試集平均」"
+    conclusion = (
+        f"本實驗以 {int(getattr(config, 'n_folds', 5))} 折交叉驗證訓練多個模型，並在各折驗證集上彙總平均表現（無另留測試集）。"
+        if eval_on_per_fold_val_only
+        else f"本實驗以 {int(getattr(config, 'n_folds', 5))} 折交叉驗證訓練多個模型，並在固定測試集上彙總平均表現，避免單次隨機切分或單折最佳化造成的樂觀偏差。"
+    )
+
+    report = f"""# 語者分離模型實驗報告 — K-fold 交叉驗證 (Whisper + Bi-LSTM)
+
+**生成時間**: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
+
+---
+
+## 1. 實驗設置摘要
+
+- **驗證方式**: {int(getattr(config, "n_folds", 5))}-fold 交叉驗證（樣本層級 `sklearn.model_selection.KFold`，與獨立 `val_data_dir` 互斥）。
+{eval_bullet}
+- **Median filter（評估）**: {'啟用' if use_median else '停用'}
+- **訓練資料根目錄**: {config.train_data_dir}
+- **評估資料來源說明**: {test_data_source}（指標實際計算於：**{metric_target}**）
+- **每折子目錄**: `{config.model_save_dir}/kfold_fold0` … `kfold_fold{int(getattr(config, "n_folds", 5)) - 1}`（同樣結構於 `log_dir`、`output_dir`）
+- **彙總 JSON**: `{report_dir}/kfold_summary.json`
+
+### 1.1 模型與訓練（與單次 pipeline 相同之 CLI／config）
+| 參數 | 值 |
+|------|------|
+| Whisper 模型大小 | {config.model_size} |
+| 批次大小 | {config.batch_size} |
+| 學習率 | {config.learning_rate} |
+| Epochs | {config.epochs} |
+| LSTM hidden | {config.lstm_hidden_size} |
+| LSTM 層數 | {config.lstm_num_layers} |
+| Encoder LoRA | {'啟用' if getattr(config, 'use_lora', False) else '停用'} |
+
+---
+
+## 2. {section2_title}
+
+| 折 | DER | False Alarm | Missed Detection | Speaker Confusion |
+|----|-----|-------------|------------------|-------------------|
+{rows_md}
+
+---
+
+## 3. {section3_caption}
+
+| 指標 | 平均 ± 標準差 |
+|------|----------------|
+| **DER** | **{aggregate['der_mean']:.2f}% ± {aggregate['der_std']:.2f}%** |
+| False Alarm | {aggregate['false_alarm_mean']:.2f}% ± {aggregate['false_alarm_std']:.2f}% |
+| Missed Detection | {aggregate['missed_detection_mean']:.2f}% ± {aggregate['missed_detection_std']:.2f}% |
+| Speaker Confusion | {aggregate['speaker_confusion_mean']:.2f}% ± {aggregate['speaker_confusion_std']:.2f}% |
+
+---
+
+## 4. 各折訓練摘要（驗證損失最佳值，僅供參考）
+
+各折內部仍以驗證損失選該折最佳 epoch 權重；**報告主結論請以上方第 3 節{sec4_ref}為準。**
+
+- 各折最佳驗證損失之平均 ± 標準差: **{mean_bvl:.4f} ± {std_bvl:.4f}**
+
+---
+
+## 5. 結論
+
+{conclusion}
+
+"""
+
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write(report)
+    print(f"報告已生成: {report_path}")
 
 
 def generate_report(config, train_summary, eval_results):
@@ -543,7 +830,14 @@ def main():
     )
     train_parser.add_argument("--window-size", type=float, default=20.0, help="音訊窗口大小（秒）")
     train_parser.add_argument("--lstm-hidden", type=int, default=256, help="LSTM 隱藏層維度")
-    train_parser.add_argument("--lstm-layers", type=int, default=2, help="LSTM 層數")
+    train_parser.add_argument(
+        "--lstm-layers",
+        "--lstm-num-layers",
+        type=int,
+        default=2,
+        dest="lstm_layers",
+        help="LSTM 層數（--lstm-num-layers 為同義別名）",
+    )
     add_lora_cli_group(train_parser)
     
     # ===== 評估命令 =====
@@ -555,14 +849,28 @@ def main():
         help="Whisper 模型大小"
     )
     eval_parser.add_argument("--lstm-hidden", type=int, default=256, help="LSTM 隱藏層維度")
-    eval_parser.add_argument("--lstm-layers", type=int, default=2, help="LSTM 層數")
+    eval_parser.add_argument(
+        "--lstm-layers",
+        "--lstm-num-layers",
+        type=int,
+        default=2,
+        dest="lstm_layers",
+        help="LSTM 層數（--lstm-num-layers 為同義別名）",
+    )
     add_lora_cli_group(eval_parser)
     # Median Filter 參數
     median_group = eval_parser.add_mutually_exclusive_group()
     median_group.add_argument("--use-median", dest="use_median", action="store_true", help="啟用中值濾波後處理")
     median_group.add_argument("--no-median", dest="use_median", action="store_false", help="停用中值濾波後處理")
     eval_parser.set_defaults(use_median=False)
-    eval_parser.add_argument("--median-size", type=int, default=5, help="中值濾波器核大小（必須是奇數，預設=5）")
+    eval_parser.add_argument(
+        "--median-size",
+        "--median-filter-size",
+        type=int,
+        default=5,
+        dest="median_size",
+        help="中值濾波器核大小（奇數；預設=5）。須併用 --use-median 才會在評估時套用",
+    )
     
     # ===== 推論命令 =====
     infer_parser = subparsers.add_parser("infer", help="推論單一音檔")
@@ -584,14 +892,28 @@ def main():
         help="Whisper 模型大小"
     )
     infer_parser.add_argument("--lstm-hidden", type=int, default=256, help="LSTM 隱藏層維度")
-    infer_parser.add_argument("--lstm-layers", type=int, default=2, help="LSTM 層數")
+    infer_parser.add_argument(
+        "--lstm-layers",
+        "--lstm-num-layers",
+        type=int,
+        default=2,
+        dest="lstm_layers",
+        help="LSTM 層數（--lstm-num-layers 為同義別名）",
+    )
     add_lora_cli_group(infer_parser)
     # Median Filter 參數
     median_group_infer = infer_parser.add_mutually_exclusive_group()
     median_group_infer.add_argument("--use-median", dest="use_median", action="store_true", help="啟用中值濾波後處理")
     median_group_infer.add_argument("--no-median", dest="use_median", action="store_false", help="停用中值濾波後處理")
     infer_parser.set_defaults(use_median=False)
-    infer_parser.add_argument("--median-size", type=int, default=5, help="中值濾波器核大小（必須是奇數，預設=5）")
+    infer_parser.add_argument(
+        "--median-size",
+        "--median-filter-size",
+        type=int,
+        default=5,
+        dest="median_size",
+        help="中值濾波器核大小（奇數；預設=5）。須併用 --use-median 才會套用",
+    )
     
     # ===== Pipeline 命令 =====
     pipeline_parser = subparsers.add_parser("pipeline", help="執行完整 pipeline（訓練+評估）")
@@ -615,15 +937,52 @@ def main():
     )
     pipeline_parser.add_argument("--window-size", type=float, default=20.0, help="音訊窗口大小（秒）")
     pipeline_parser.add_argument("--lstm-hidden", type=int, default=256, help="LSTM 隱藏層維度")
-    pipeline_parser.add_argument("--lstm-layers", type=int, default=2, help="LSTM 層數")
+    pipeline_parser.add_argument(
+        "--lstm-layers",
+        "--lstm-num-layers",
+        type=int,
+        default=2,
+        dest="lstm_layers",
+        help="LSTM 層數（--lstm-num-layers 為同義別名）",
+    )
     add_lora_cli_group(pipeline_parser)
     # Median Filter 參數
     median_group_pipe = pipeline_parser.add_mutually_exclusive_group()
     median_group_pipe.add_argument("--use-median", dest="use_median", action="store_true", help="啟用中值濾波後處理")
     median_group_pipe.add_argument("--no-median", dest="use_median", action="store_false", help="停用中值濾波後處理")
     pipeline_parser.set_defaults(use_median=False)
-    pipeline_parser.add_argument("--median-size", type=int, default=5, help="中值濾波器核大小（必須是奇數，預設=5）")
-    
+    pipeline_parser.add_argument(
+        "--median-size",
+        "--median-filter-size",
+        type=int,
+        default=5,
+        dest="median_size",
+        help="中值濾波器核大小（奇數；預設=5）。評估階段須併用 --use-median 才會套用",
+    )
+    kfold_grp = pipeline_parser.add_mutually_exclusive_group()
+    kfold_grp.add_argument(
+        "--kfold",
+        dest="pipeline_use_kfold",
+        action="store_true",
+        default=None,
+        help="啟用 K-fold 交叉驗證 pipeline（折數見 config.n_folds，預設 5）",
+    )
+    kfold_grp.add_argument(
+        "--no-kfold",
+        dest="pipeline_use_kfold",
+        action="store_false",
+        default=None,
+        help="明確停用 K-fold（沿用 config.enable_kfold_cv）",
+    )
+    pipeline_parser.set_defaults(pipeline_use_kfold=None)
+    pipeline_parser.add_argument(
+        "--n-folds",
+        type=int,
+        default=None,
+        dest="n_folds",
+        help="K-fold 折數（未指定時沿用 config.n_folds）",
+    )
+
     # ===== 比較命令 =====
     compare_parser = subparsers.add_parser("compare", help="比較多個模型")
     compare_parser.add_argument(

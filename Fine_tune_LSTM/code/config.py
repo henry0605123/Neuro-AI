@@ -39,8 +39,8 @@ class Config:
     freeze_encoder: bool = True
     # Whisper Encoder LoRA（與 train.py checkpoint、model.py 一致；未啟用時為凍結 Encoder + Bi-LSTM）
     use_lora: bool = False
-    lora_rank: int = 32
-    lora_alpha: int = 32
+    lora_rank: int = 4
+    lora_alpha: int = 4
     lora_dropout: float = 0.05
     # 前向未使用 decoder；預設凍結以節省記憶體
     freeze_whisper_decoder: bool = True
@@ -126,8 +126,9 @@ class Config:
 
     # 是否從 train_data_dir 以固定比例隨機切分 train/val/test（避免寫死單一 test_audio_path）
     enable_fixed_split_from_train_dir: bool = True
-    # 固定比例（train, val, test）
-    train_val_test_ratio: Tuple[int, int, int] = (7, 2, 1)
+    # 固定比例（train, val, test）。第三項可為 0：例如 (8, 2, 0) 表示不保留獨立測試桶。
+    # 與 enable_kfold_cv 並用時，K-fold 在「train+val 合併池」上折疊；彙總 DER 為各折「該折驗證集」上之平均（無另留測試集）。
+    train_val_test_ratio: Tuple[int, int, int] = (8, 2, 0)
     #
     # --- 改回「自閉症 / 原本」每受試者一資料夾 + SRT 時，可改為例如： ---
     train_data_dir = r"D:\自閉症\data\Fine_tune"
@@ -169,6 +170,14 @@ class Config:
     
     # 驗證集比例
     val_split_ratio: float = 0.25
+
+    # ---------- K-fold 交叉驗證（pipeline 專用；與獨立 val_data_dir 互斥）----------
+    # 啟用後：pipeline 會訓練 n_folds 個模型，每折驗證集互斥；測試集仍為 create_test_dataloader 之固定集合。
+    # 最終報告為各折在該測試集上 DER 等指標之平均（± 標準差），不另選「最佳折」作為唯一輸出權重。
+    enable_kfold_cv: bool = True
+    n_folds: int = 5
+    # 訓練時寫入 checkpoint 檔名用（僅 K-fold 迴圈內會設為 0..n_folds-1）
+    kfold_fold_index: Optional[int] = None
     
     # 隨機種子：None 表示每次執行自動產生新 seed；若要固定可重現，設為整數（如 42）
     seed: Optional[int] = None

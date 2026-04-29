@@ -2,7 +2,7 @@
 
 > **架構變更**: 將原本的 3 層 Conv1D 替換為 2 層 Bi-LSTM  
 > **Encoder 微調**: 預設在 **凍結 Whisper Encoder 基底**的前提下，於 FFN（`fc1` / `fc2`）套用 **PEFT LoRA**（對齊 [arXiv:2601.17640](https://arxiv.org/abs/2601.17640) 中 rank 16 的設定；見下方 [Whisper Encoder 與 LoRA](#whisper-encoder-與-lora)）  
-> **日期**: 2026-01-24（README 更新：2026-04-10）  
+> **日期**: 2026-01-24（README 更新：2026-04-16）  
 > **資料**: 支援 **SRT** 與 **RTTM** 標註；可搭配 **Playlogue** 官方 train/val/test 目錄（2026-03-24）  
 > **路徑**: 程式與本說明位於 **`Fine_tune_LSTM/code/`**；請在該目錄執行 `python main.py ...`。`config.py` 內「資料路徑設定」可依資料集修改（檔內附註解範例）。
 
@@ -14,7 +14,7 @@
 2. [架構說明](#架構說明)  
 3. [Whisper Encoder 與 LoRA](#whisper-encoder-與-lora)  
 4. [Bi-LSTM 架構細節](#bi-lstm-架構細節)  
-5. [完整 Pipeline 使用方式](#完整-pipeline-使用方式)（**建議先讀**）  
+5. [完整 Pipeline 使用方式](#完整-pipeline-使用方式)（**建議先讀**；含 [K-fold 交叉驗證](#k-fold-交叉驗證pipeline)）  
 6. [資料集格式與切換方式](#資料集格式與切換方式)  
 7. [快速開始（指令速查）](#快速開始指令速查)  
 8. [檔案結構](#檔案結構)  
@@ -148,6 +148,8 @@ Conv1D Classifier (→ 3 類別)
 | `train_data_dir` | 訓練用根目錄（其下每個**子資料夾** = 一個樣本） |
 | `val_data_dir` | **選填**。若設成有效目錄（例如 Playlogue 的 `val/`），驗證集**只從此目錄**掃描，**不再**使用 `val_split_ratio` 隨機切分。若改回 `None` 或空字串，則恢復「從 `train_data_dir` 隨機切驗證集」。 |
 | `val_split_ratio` | 僅在 **未設定** `val_data_dir` 時生效。 |
+| `enable_kfold_cv` | `pipeline` 是否改跑 K-fold；與獨立 `val_data_dir` **互斥**。 |
+| `n_folds` | K-fold 折數（預設 5）；亦可由 `--n-folds` 覆寫。 |
 | `test_audio_path` | 單一測試音檔（給 `evaluate` / 預設測試 DataLoader 用） |
 | `test_srt_path` | 測試用 SRT（可與 RTTM擇一或並存） |
 | `test_rttm_path` | 測試用 RTTM；若路徑有效，**優先於** SRT 載入標註 |
@@ -167,6 +169,28 @@ python main.py train --model-size medium --epochs 15 --no-use-lora
 
 # 訓練 + 以 config 中的 test_* 評估並產生報告
 python main.py pipeline --model-size medium --epochs 15
+```
+
+### K-fold 交叉驗證（`pipeline`）
+
+當 **`config.enable_kfold_cv = True`**（或指令加上 **`--kfold`**）時，`pipeline` 會改為 **K 折交叉驗證**（預設 **5** 折，由 **`config.n_folds`** 或 **`--n-folds`** 指定）：
+
+1. **切分**：在「訓練用樣本池」上以 `sklearn.model_selection.KFold` 做樣本級交叉；若 **`enable_fixed_split_from_train_dir=True`**，則池子為依 `train_val_test_ratio` 切出之 **train+val**（**測試集先保留**，不參與折疊）。  
+2. **每折**：獨立訓練一個模型（該折內仍以驗證損失存**該折**最佳權重），並在**與單次 pipeline 相同之固定測試集**上算 DER 等指標。權重與圖表寫入 `model_save_dir/kfold_fold{k}`、`log_dir/kfold_fold{k}`、`output_dir/kfold_fold{k}`。  
+3. **彙總輸出**（主結論）：寫入 **`output_dir/ANALYSIS_REPORT.md`** 與 **`output_dir/kfold_summary.json`**，報告主表為各折測試指標之 **平均 ± 標準差**；**不**另選「整體最佳折」覆寫為唯一對外模型。  
+
+**限制**：與 **獨立 `val_data_dir` 目錄** 互斥；啟用 K-fold 時請將 `val_data_dir` 留空。樣本數須 **≥ `n_folds`**。
+
+**不保留測試集（資料少、只報 CV 平均）**：可將 **`train_val_test_ratio` 設為例如 `(8, 2, 0)`**（第三項為 0）。此時 K-fold 的樣本池為 **train+val 合併（即全部樣本）**，不再先切出一塊測試；彙總 DER 改為各折在 **該折驗證集** 上計算後再平均（見 `kfold_summary.json` 的 `eval_metric_source`）。此做法與「另留固定測試集」不同，且驗證集亦用於 early stopping，解讀上略偏樂觀，屬小樣本常見取捨。**一般單次 `pipeline`（非 K-fold）** 在僅設 `train_data_dir`、無 `test_data_dir` 時仍須有測試來源；`(8,2,0)` 主要搭配 **K-fold** 使用。
+
+```powershell
+# 方式一：在 config.py 設 enable_kfold_cv = True 後直接 pipeline
+python main.py pipeline --model-size medium --epochs 15
+
+# 方式二：僅本次執行啟用（不改 config 檔）
+python main.py pipeline --model-size medium --epochs 15 --kfold
+# 指定 5 折以外（例如 10）
+python main.py pipeline --model-size medium --epochs 15 --kfold --n-folds 10
 ```
 
 ### 步驟四：評估（載入已存模型）
@@ -282,6 +306,12 @@ python main.py pipeline --model-size medium --epochs 15 --lstm-hidden 256 --lstm
 # 明確指定 LoRA 開關（與 config 預設擇一即可）
 python main.py train --model-size medium --epochs 15 --use-lora
 python main.py train --model-size medium --epochs 15 --no-use-lora
+
+# 較大／較新 Whisper 後端（需足夠 VRAM；HF 名稱見「命令列參數」一節）
+python main.py pipeline --model-size large-v3 --epochs 15 --batch-size 8
+python main.py pipeline --model-size large-v3-turbo --epochs 30 --batch-size 8
+# 與 large-v3-turbo 為同一權重，checkpoint 檔名會是 whisper_large-turbo_...
+python main.py pipeline --model-size large-turbo --epochs 30 --batch-size 8
 ```
 
 ```powershell
@@ -328,6 +358,26 @@ Fine_tune_LSTM/
 
 ## 命令列參數
 
+### Whisper 後端與 `--model-size`
+
+`train`、`evaluate`、`infer`、`pipeline` 的 **`--model-size`** 會決定從 Hugging Face 載入的 Whisper 檢查點。實作上多數取值對應 `config.whisper_model_name`，即 **`openai/whisper-{model_size}`**；例外見下表最後一列。
+
+| CLI `--model-size` | Hugging Face 模型 ID |
+|--------------------|----------------------|
+| `tiny` | `openai/whisper-tiny` |
+| `base` | `openai/whisper-base` |
+| `small` | `openai/whisper-small` |
+| `medium` | `openai/whisper-medium` |
+| `large` | `openai/whisper-large` |
+| `large-v2` | `openai/whisper-large-v2` |
+| `large-v3` | `openai/whisper-large-v3` |
+| `large-v3-turbo` | `openai/whisper-large-v3-turbo` |
+| `large-turbo` | **`openai/whisper-large-v3-turbo`**（簡寫；HF 上**沒有** `openai/whisper-large-turbo`） |
+
+**Checkpoint 檔名**：`{model_save_dir}/whisper_{model_size}_bilstm_best.pt`，其中 `{model_size}` 與你在 CLI 寫的字串相同（故 `large-turbo` 與 `large-v3-turbo` 會存成不同檔名，若需對齊請固定使用其中一種）。
+
+**相依性**：`large-v3`、`large-v3-turbo`、`large-turbo` 等需較新的 **`transformers`**；若 `from_pretrained` 失敗，請依 `requirements.txt` 升級後再試。
+
 ### LoRA（Whisper Encoder FFN）
 
 | 參數 | 說明 |
@@ -348,7 +398,7 @@ Fine_tune_LSTM/
 
 | 參數 | 預設值 | 說明 |
 |------|--------|------|
-| `--model-size` | medium | Whisper 模型大小 |
+| `--model-size` | medium | Whisper 後端大小；可選值與 HF 對照見上一節 **「Whisper 後端與 `--model-size`」** |
 | `--epochs` | 15 | 訓練 epochs |
 | `--batch-size` | 8 | 批次大小 |
 | `--lr` | 5e-4 | 學習率 |
@@ -367,7 +417,15 @@ Fine_tune_LSTM/
 |------|--------|------|
 | `--use-median` | 停用 | 啟用中值濾波 |
 | `--no-median` | 啟用 | 停用中值濾波 |
-| `--median-size` | 5 | 核大小（須為奇數） |
+| `--median-size` | 5 | 核大小（須為奇數；別名 `--median-filter-size`） |
+
+### `pipeline` 專用（K-fold）
+
+| 參數 | 說明 |
+|------|------|
+| `--kfold` | 本次執行強制啟用 K-fold（等同 `config.enable_kfold_cv=True`） |
+| `--no-kfold` | 本次執行強制停用 K-fold |
+| `--n-folds` | 折數；未指定則沿用 `config.n_folds`（預設 5） |
 
 ---
 

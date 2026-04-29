@@ -387,7 +387,12 @@ class Trainer:
         torch.save(checkpoint, checkpoint_path)
         
         if is_best:
-            best_path = Path(self.config.model_save_dir) / f"whisper_{self.config.model_size}_bilstm_best.pt"
+            fold = getattr(self.config, "kfold_fold_index", None)
+            if fold is not None:
+                best_name = f"whisper_{self.config.model_size}_bilstm_fold{int(fold)}_best.pt"
+            else:
+                best_name = f"whisper_{self.config.model_size}_bilstm_best.pt"
+            best_path = Path(self.config.model_save_dir) / best_name
             torch.save(checkpoint, best_path)
             print(f"  💾 最佳模型已儲存: {best_path}")
     
@@ -478,33 +483,50 @@ def calculate_class_weights(train_loader: DataLoader, num_classes: int = 3, chil
     return weights
 
 
-def train_model(config: Config) -> Tuple[nn.Module, Dict]:
-    """訓練模型的主函式"""
+def train_model(
+    config: Config,
+    train_loader: Optional[DataLoader] = None,
+    val_loader: Optional[DataLoader] = None,
+    *,
+    print_config: bool = True,
+) -> Tuple[nn.Module, Dict]:
+    """
+    訓練模型的主函式。
+
+    若傳入 train_loader / val_loader（兩者皆須有值），則略過 create_dataloaders，
+    供 K-fold 等自訂切分使用。
+    """
     from dataset import create_dataloaders
-    
+
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
-    
-    config.print_config()
-    
-    print("\n建立資料載入器...")
-    train_loader, val_loader = create_dataloaders(config)
-    
+
+    if print_config:
+        config.print_config()
+
+    if train_loader is not None and val_loader is not None:
+        print("\n使用外部提供的 train / val DataLoader（例如 K-fold 切分）。")
+    elif train_loader is None and val_loader is None:
+        print("\n建立資料載入器...")
+        train_loader, val_loader = create_dataloaders(config)
+    else:
+        raise ValueError("train_loader 與 val_loader 須同時指定或同時省略")
+
     print(f"訓練批次數: {len(train_loader)}")
     print(f"驗證批次數: {len(val_loader)}")
-    
+
     print("\n建立 Whisper + Bi-LSTM 模型...")
     model = create_model(config)
-    
+
     trainer = Trainer(
         model=model,
         config=config,
         train_loader=train_loader,
-        val_loader=val_loader
+        val_loader=val_loader,
     )
-    
+
     summary = trainer.train()
-    
+
     return model, summary
 
 

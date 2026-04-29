@@ -24,6 +24,7 @@ from datetime import timedelta
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
+from sklearn.model_selection import KFold
 import librosa
 import torchaudio
 from tqdm import tqdm
@@ -1030,6 +1031,101 @@ def split_train_val_test_from_config(
     return _split_samples_by_fixed_ratio(samples, ratio=ratio, seed=config.seed)
 
 
+def create_dataloaders_from_sample_lists(
+    config: Config,
+    train_samples: List[AudioSample],
+    val_samples: List[AudioSample],
+    *,
+    split_message: str = "",
+) -> Tuple[DataLoader, DataLoader]:
+    """
+    由已切分之樣本列表建立 train / val DataLoader（供 K-fold 或自訂切分使用）。
+    """
+    if split_message:
+        print(split_message)
+    if not train_samples:
+        raise ValueError("訓練樣本列表為空，無法建立 DataLoader")
+    if not val_samples:
+        raise ValueError("驗證樣本列表為空，無法建立 DataLoader")
+
+    train_dataset = SpeakerDiarizationDataset(
+        samples=train_samples,
+        config=config,
+        is_training=True,
+        preload=True,
+    )
+    val_dataset = SpeakerDiarizationDataset(
+        samples=val_samples,
+        config=config,
+        is_training=False,
+        preload=True,
+    )
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=config.batch_size,
+        shuffle=True,
+        num_workers=config.num_workers,
+        pin_memory=config.pin_memory,
+        drop_last=True,
+        persistent_workers=config.num_workers > 0,
+    )
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=config.batch_size,
+        shuffle=False,
+        num_workers=config.num_workers,
+        pin_memory=config.pin_memory,
+        drop_last=False,
+        persistent_workers=config.num_workers > 0,
+    )
+    return train_loader, val_loader
+
+
+def get_kfold_train_val_samples(config: Config, fold_idx: int) -> Tuple[List[AudioSample], List[AudioSample]]:
+    """
+    取得第 fold_idx 折（0-based）的訓練／驗證樣本列表。
+    與獨立 val_data_dir 不相容；若啟用固定比例切分，僅在 train+val 池上折疊，test 集合不含於此池。
+    """
+    n_folds = int(getattr(config, "n_folds", 5))
+    if n_folds < 2:
+        raise ValueError("n_folds 必須為 >= 2 的整數")
+    val_dir_raw = getattr(config, "val_data_dir", None) or ""
+    val_dir = val_dir_raw.strip() if isinstance(val_dir_raw, str) else ""
+    if val_dir and os.path.isdir(val_dir):
+        raise ValueError(
+            "已啟用 K-fold 時不可同時使用獨立 val_data_dir；請清空 val_data_dir 或將 enable_kfold_cv=False。"
+        )
+
+    seed = int(config.seed) if config.seed is not None else 42
+    enable_fixed = bool(getattr(config, "enable_fixed_split_from_train_dir", False))
+
+    if enable_fixed:
+        train_samples, val_samples, _test = split_train_val_test_from_config(config)
+        pool = train_samples + val_samples
+        if not pool:
+            raise ValueError("固定比例切分後 train+val 池為空，無法做 K-fold")
+    else:
+        pool = discover_training_samples(config)
+        if len(pool) == 0:
+            raise ValueError("沒有找到任何訓練樣本！")
+
+    if len(pool) < n_folds:
+        raise ValueError(
+            f"可用於 K-fold 的樣本數 ({len(pool)}) 小於折數 ({n_folds})，請減少 n_folds 或增加資料。"
+        )
+    if fold_idx < 0 or fold_idx >= n_folds:
+        raise ValueError(f"fold_idx 須滿足 0 <= fold_idx < n_folds（n_folds={n_folds}）")
+
+    idx = np.arange(len(pool))
+    kf = KFold(n_splits=n_folds, shuffle=True, random_state=seed)
+    splits = list(kf.split(idx))
+    train_i, val_i = splits[fold_idx]
+    train_samples = [pool[i] for i in train_i]
+    val_samples = [pool[i] for i in val_i]
+    return train_samples, val_samples
+
+
 def create_dataloaders(
     config: Config,
     val_split_ratio: Optional[float] = None
@@ -1082,43 +1178,7 @@ def create_dataloaders(
         print(f"  訓練集: {len(train_samples)} 個受試者")
         print(f"  驗證集: {len(val_samples)} 個受試者")
     
-    # 建立資料集
-    train_dataset = SpeakerDiarizationDataset(
-        samples=train_samples,
-        config=config,
-        is_training=True,
-        preload=True
-    )
-    
-    val_dataset = SpeakerDiarizationDataset(
-        samples=val_samples,
-        config=config,
-        is_training=False,
-        preload=True
-    )
-    
-    # 建立 DataLoader
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config.batch_size,
-        shuffle=True,
-        num_workers=config.num_workers,
-        pin_memory=config.pin_memory,
-        drop_last=True,
-        persistent_workers=config.num_workers > 0
-    )
-    
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=config.batch_size,
-        shuffle=False,
-        num_workers=config.num_workers,
-        pin_memory=config.pin_memory,
-        drop_last=False,
-        persistent_workers=config.num_workers > 0
-    )
-    
-    return train_loader, val_loader
+    return create_dataloaders_from_sample_lists(config, train_samples, val_samples)
 
 
 def create_test_dataloader(config: Config) -> DataLoader:

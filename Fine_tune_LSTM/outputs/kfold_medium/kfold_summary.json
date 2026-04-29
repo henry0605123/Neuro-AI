@@ -1,0 +1,52 @@
+{
+  "n_folds": 5,
+  "folds": [
+    {
+      "fold": 0,
+      "der": 29.3353312791074,
+      "false_alarm": 13.292670915818947,
+      "missed_detection": 7.871484248589479,
+      "speaker_confusion": 8.171176114698971
+    },
+    {
+      "fold": 1,
+      "der": 29.350613822111274,
+      "false_alarm": 11.894584458958839,
+      "missed_detection": 9.170285766394237,
+      "speaker_confusion": 8.285743596758198
+    },
+    {
+      "fold": 2,
+      "der": 54.67276049170103,
+      "false_alarm": 9.494002770924064,
+      "missed_detection": 9.525465454525381,
+      "speaker_confusion": 35.65329226625158
+    },
+    {
+      "fold": 3,
+      "der": 39.29873182935772,
+      "false_alarm": 8.562847776387871,
+      "missed_detection": 12.434219039813657,
+      "speaker_confusion": 18.301665013156192
+    },
+    {
+      "fold": 4,
+      "der": 52.261747045524956,
+      "false_alarm": 20.19918401782242,
+      "missed_detection": 16.68347405400774,
+      "speaker_confusion": 15.37908897369479
+    }
+  ],
+  "aggregate": {
+    "der_mean": 40.98383689356048,
+    "der_std": 12.12886049706399,
+    "false_alarm_mean": 12.688657987982427,
+    "false_alarm_std": 4.599769491218279,
+    "missed_detection_mean": 11.1369857126661,
+    "missed_detection_std": 3.5204670591645675,
+    "speaker_confusion_mean": 17.158193192911945,
+    "speaker_confusion_std": 11.247536031944486
+  },
+  "eval_metric_source": "per_fold_validation",
+  "test_split_note": "train_val_test_ratio 第三項為 0：各折 DER 在該折驗證集上計算後平均（無獨立測試集）。"
+}

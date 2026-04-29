@@ -1,6 +1,6 @@
 # 語者分離模型實驗報告 (Whisper + Bi-LSTM)
 
-**生成時間**: 2026-04-16 17:33:56
+**生成時間**: 2026-04-17 18:46:10
 
 ---
 
@@ -12,8 +12,8 @@
 | Whisper 模型大小 | medium |
 | 音訊窗口大小 | 20.0 秒 |
 | Step Size | 20.0 ms |
-| 批次大小 | 8 |
-| 學習率 | 1e-05 |
+| 批次大小 | 16 |
+| 學習率 | 5e-05 |
 | 權重衰減 | 0.001 |
 | 最大訓練 Epochs | 30 |
 | **分類類別數** | **3 (Child, Adult, Silence)** |
@@ -46,12 +46,12 @@
 ### 2.1 訓練摘要
 | 指標 | 值 |
 |------|------|
-| 總訓練 Epochs | 21 |
-| 最佳 Epoch | 16 |
-| 最佳驗證損失 | 0.7334 |
-| 最佳驗證準確率 | 73.17% |
-| 總訓練時間 | 19.3 分鐘 |
-| 平均每 Epoch 時間 | 55.3 秒 |
+| 總訓練 Epochs | 14 |
+| 最佳 Epoch | 9 |
+| 最佳驗證損失 | 0.5776 |
+| 最佳驗證準確率 | 76.14% |
+| 總訓練時間 | 12.2 分鐘 |
+| 平均每 Epoch 時間 | 52.3 秒 |
 
 ### 2.2 Loss 收斂情形
 訓練曲線圖已儲存至: `C:\Users\User\PycharmProjects\PythonProject1\Fine_tune_LSTM\logs/training_curves.png`
@@ -67,10 +67,10 @@
 
 | 指標 | 值 |
 |------|------|
-| **DER** | **57.39%** |
-| False Alarm Rate | 12.98% |
-| Missed Detection Rate | 10.23% |
-| Speaker Confusion Rate | 34.17% |
+| **DER** | **45.36%** |
+| False Alarm Rate | 31.52% |
+| Missed Detection Rate | 8.65% |
+| Speaker Confusion Rate | 5.19% |
 
 ### 3.2 架構比較
 
