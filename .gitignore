@@ -1,0 +1,41 @@
+# ============================================================
+# 只推程式碼。所有資料、權重、特徵、病患資料一律排除。
+# 本 repo 用「明確 allowlist」加檔,以下為安全網,避免誤加。
+# ============================================================
+
+# ---- 別人的 repo(有各自的 git,不納入) ----
+child-adult-diarization/
+neuroai-transcribe/
+
+# ---- 模型權重 / checkpoints / 特徵快取 ----
+**/checkpoints/
+**/logs/
+**/logs_retrain/
+**/run_logs/
+**/features/
+**/features_*/
+**/*_features/
+*.safetensors
+*.ckpt
+*.pt
+*.bin
+*.pth
+__pycache__/
+*.pyc
+
+# ---- 資料 / PII(臨床逐字稿、音檔、切段、預測) ----
+**/data/
+**/segments/
+**/predictions/
+**/outputs/
+*.jsonl
+*.mp3
+*.wav
+*.m4a
+*.srt
+manifest*.jsonl
+GTruth*.txt
+
+# ---- 語者分離 handoff(含權重 + 病患姓名的資料夾) ----
+handoff_*/
+*_handoff/

@@ -1,0 +1,43 @@
+name: whisper_base_finetune
+
+# path to save checkpoints — edit to your own data root before running
+save: data/whisper-modeling
+
+# pretrained checkpoint to load before fine-tuning — edit to your own data root before running
+pretrained_checkpoint: data/whisper-modeling/checkpoints/whisper_base_5k/epoch=17-val_loss=0.113.ckpt
+
+# audio and annotation path — edit to your own data root before running
+audio: data/finetune_prepared/audios
+annotation: data/finetune_prepared/labels
+
+# seed
+seed: 42
+
+# data
+batch_size: 16
+window_size: 10
+accumulate_grad_batches: 1
+
+# model
+learning_rate: 0.0001
+weight_decay: 0.0001
+lora_rank: 8
+
+# trainer
+max_epochs: 30
+early_stopping_patience: 10
+devices: [0]
+
+# optimizer
+optimizer: Adam
+
+# embedding choice
+embedding: whisper_base
+num_enc_layers_dict:
+    whisper_small:    12
+    whisper_base:     6
+    whisper_tiny:     4
+hid_dim_dict:
+    whisper_small:    768
+    whisper_base:     512
+    whisper_tiny:     384

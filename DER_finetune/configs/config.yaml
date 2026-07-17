@@ -1,0 +1,38 @@
+name: whisper_base_5k
+
+# path to save checkpoints — edit to your own data root before running
+save: data/whisper-modeling
+
+# audio and anotation path — edit to your own data root before running
+audio: data/simulated_conversations/audios
+annotation: data/simulated_conversations/labels_overlap
+# seed:
+seed: 42
+
+# data:
+batch_size: 64
+window_size: 10
+accumulate_grad_batches: 1
+
+# model:
+learning_rate: 0.001
+weight_decay: 0.0001
+lora_rank: 8
+
+# trainer:
+max_epochs: 20
+devices: [0]
+
+# optimizer:
+optimizer: Adam
+
+# embedding choice:
+embedding: whisper_base
+num_enc_layers_dict:
+    whisper_small:    12
+    whisper_base:     6
+    whisper_tiny:     4
+hid_dim_dict:
+    whisper_small:    768
+    whisper_base:     512
+    whisper_tiny:     384
