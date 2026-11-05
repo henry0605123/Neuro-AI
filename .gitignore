@@ -46,3 +46,6 @@ child_split/PROGRESS.md
 *.log
 .DS_Store
 scratchpad/
+
+# 去識別對照表(含真實姓名,絕不可上傳)
+_private_id_map*.csv

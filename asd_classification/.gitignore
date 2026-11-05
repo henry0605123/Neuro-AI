@@ -1,0 +1,29 @@
+# R1 (see QUESTIONS Q1): no real subject data ever enters this repo.
+data/
+real_data/
+*.wav
+*.flac
+*.mp3
+
+outputs/
+cache/
+_pip*.log
+_*.log
+.pytest_cache/
+
+# The repository-root .gitignore carries `**/models/`, `**/features/`, `**/outputs/`
+# and `**/_*.py` for the ASR project's data directories. Every one of those would
+# swallow part of this package, so the source tree is re-included explicitly here.
+!src/
+!src/**
+!tests/
+!tests/**
+!configs/
+!configs/**
+!docs/
+!docs/**
+
+# ...and then the build artefacts are dropped again, after the negations above.
+__pycache__/
+**/__pycache__/**
+*.pyc

@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>人工驗證</title>
+<style>
+  :root {
+    --bg: #f6f4ef; --panel: #ffffff; --ink: #24292f; --muted: #6a737d; --line: #d8d4ca;
+    --accent: #c2410c; --accent-soft: #fde7d9; --ok: #15803d; --ok-soft: #dcfce7;
+    --sel: #b91c1c; --wave: rgba(37, 99, 235, .55);
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 15px/1.6 "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif; }
+  header { background: var(--panel); border-bottom: 1px solid var(--line); padding: 10px 20px;
+           display: flex; align-items: center; gap: 18px; flex-wrap: wrap; position: sticky; top: 0; z-index: 2; }
+  header h1 { font-size: 17px; margin: 0; white-space: nowrap; }
+  nav { display: flex; gap: 6px; flex-wrap: wrap; }
+  nav button { border: 1px solid var(--line); background: var(--bg); border-radius: 8px;
+               padding: 6px 12px; cursor: pointer; font: inherit; color: var(--ink); }
+  nav button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  nav .count { font-size: 12px; opacity: .8; margin-left: 6px; }
+  main { max-width: 1180px; margin: 18px auto; padding: 0 16px; }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin-bottom: 14px; }
+  details summary { cursor: pointer; font-weight: 600; }
+  details p, details li { color: #3b4148; margin: 6px 0; }
+  .bar { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; margin-top: 10px; }
+  .bar > div { height: 100%; background: var(--ok); width: 0; transition: width .2s; }
+  .itemhead { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .code { font-family: ui-monospace, Consolas, monospace; background: var(--bg); padding: 2px 8px; border-radius: 6px; }
+  .saved { color: var(--ok); font-weight: 600; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 12px 0; }
+  .btn { border: 1px solid var(--line); background: #fff; border-radius: 8px; padding: 8px 14px;
+         cursor: pointer; font: inherit; color: var(--ink); }
+  .btn:hover { border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.choice { min-width: 150px; text-align: left; }
+  .btn.chosen { background: var(--ok-soft); border-color: var(--ok); }
+  .btn kbd, .hint kbd { font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+         border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; margin-right: 6px; background: var(--bg); color: var(--ink); }
+  .hint { color: var(--muted); font-size: 13px; }
+  canvas { display: block; width: 100%; border: 1px solid var(--line); border-radius: 8px; background: #fff; cursor: crosshair; }
+  input[type=text] { width: 100%; font: inherit; font-size: 20px; padding: 10px 12px;
+                     border: 1px solid var(--line); border-radius: 8px; }
+  input[type=text]:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+  #toast { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); background: #24292f; color: #fff;
+           padding: 8px 16px; border-radius: 8px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+  #toast.show { opacity: .92; }
+  .empty { color: var(--muted); padding: 30px 0; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>第 5 步：人工驗證</h1>
+  <nav id="tabs"></nav>
+</header>
+<main>
+  <div class="panel"><details id="help" open><summary id="helpTitle"></summary><div id="helpBody"></div></details>
+    <div class="bar"><div id="progress"></div></div></div>
+  <div class="panel" id="work"></div>
+</main>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const TASKS = [
+  { key: "mfa", name: "音節切點", help: `
+    <p>電腦（MFA）把孩子這句話切成一個一個字。按播放，每個字會在電腦認為「它出現的時間」亮起來。</p>
+    <ul><li>字亮的時間大致跟著聲音走 → <kbd>1</kbd> 大致對</li>
+    <li>字亮得明顯太早、太晚，或一堆字擠在一瞬間亮完 → <kbd>2</kbd> 明顯切錯</li>
+    <li>聽不清楚，或被別人的聲音蓋過 → <kbd>3</kbd> 聽不清楚</li>
+    <li><kbd>空白</kbd>播放　<kbd>S</kbd>慢速播放　選了就自動存檔並跳下一段</li></ul>` },
+  { key: "speaker", name: "誰在說話", help: `
+    <p>聽這一小段，判斷是誰在說話。這裡刻意不顯示逐字稿標的是誰，避免被影響。</p>
+    <p><kbd>空白</kbd>再聽一次　<kbd>1</kbd>–<kbd>5</kbd>選擇（選了就自動存檔並跳下一段）</p>` },
+  { key: "echo", name: "仿說聽打", help: `
+    <p>把孩子這句話逐字打出來。<b>只寫實際聽到的字</b>，聽不清楚的地方不要用前後文去猜，也不要想施測者剛剛說了什麼。</p>
+    <p><kbd>Esc</kbd>再聽一次　<kbd>Enter</kbd>儲存並下一段　完全聽不清楚：勾選「聽不清楚」再按 Enter</p>` },
+  { key: "a12", name: "音量變化", help: `
+    <p>先聽同一個孩子<b>平常音量</b>的一句（參考），再聽<b>要判斷</b>的這句。這句特別大聲或小聲，主要是因為？</p>
+    <ul><li>真的改變說話音量：聲音的質地跟著變，例如用喊的、或像講悄悄話。</li>
+    <li>離麥克風遠近不同：質地差不多，只有遠近感、回音或背景聲的比例改變。</li></ul>
+    <p><kbd>A</kbd>播參考句　<kbd>空白</kbd>播要判斷的句子　<kbd>1</kbd>–<kbd>4</kbd>選擇（自動存檔並跳下一段）</p>` },
+  { key: "transcribe", name: "雙人轉錄", help: `
+    <p>每一句都是從所有錄音隨機抽出來的。選出說話的人，並逐字打出內容。這是在檢查原本逐字稿可不可靠，
+    所以<b>完全依照你聽到的</b>，不要參考原稿。需要上下文時，可以聽這句之前的 4 秒。可以隨時關掉，下次會從沒做完的地方繼續。</p>
+    <p><kbd>Esc</kbd>再聽一次　<kbd>Shift</kbd>+<kbd>Esc</kbd>聽前面 4 秒　<kbd>Alt</kbd>+<kbd>1</kbd>–<kbd>5</kbd>選說話的人
+    <kbd>Alt</kbd>+<kbd>0</kbd>聽不清楚　<kbd>Enter</kbd>儲存並下一句</p>` },
+];
+const SPEAKERS = [["child", "兒童"], ["examiner", "施測者"], ["overlap", "兩人同時說話"], ["other", "其他人"], ["unsure", "聽不出來"]];
+const A12 = [["real", "真的改變說話音量"], ["distance", "離麥克風遠近不同"], ["both", "兩者都有"], ["unsure", "無法判斷"]];
+
+let ITEMS = {}, ANSWERS = {}, task = "mfa";
+const pos = {};
+let actx = null, current = null;
+const buffers = new Map();
+
+// ------------------------------------------------------------------ audio
+function ctx() { if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)(); return actx; }
+async function buffer(name) {
+  if (!buffers.has(name)) {
+    const p = fetch("/clip/" + name).then(r => r.arrayBuffer()).then(b => ctx().decodeAudioData(b));
+    buffers.set(name, p);
+  }
+  return buffers.get(name);
+}
+let playing = null;
+async function play(name, start = 0, dur = null, rate = 1) {
+  const buf = await buffer(name);
+  if (current) { try { current.stop(); } catch (e) {} }
+  const src = ctx().createBufferSource();
+  src.buffer = buf; src.playbackRate.value = rate; src.connect(ctx().destination);
+  const s = Math.max(0, start), d = dur == null ? undefined : Math.max(0.02, dur);
+  src.start(0, s, d); current = src;
+  playing = { name, src, start: s, t0: ctx().currentTime, rate, end: d == null ? buf.duration : s + d };
+  src.onended = () => { if (playing && playing.src === src) playing = null; };
+}
+// Position in the clip, in clip seconds, while `name` is playing; null otherwise.
+function playhead(name) {
+  if (!playing || playing.name !== name) return null;
+  return Math.min(playing.end, playing.start + (ctx().currentTime - playing.t0) * playing.rate);
+}
+
+// Samples for drawing come straight from the 16-bit WAV, not from Web Audio: decoding
+// through an AudioContext waits on the audio device, and the picture should not.
+const pcms = new Map();
+function pcm(name) {
+  if (!pcms.has(name)) {
+    pcms.set(name, fetch("/clip/" + name).then(r => r.arrayBuffer()).then(buf => {
+      const v = new DataView(buf); let off = 12, rate = 16000, ch = 1, bits = 16, data = null;
+      while (off + 8 <= v.byteLength) {
+        const id = String.fromCharCode(v.getUint8(off), v.getUint8(off + 1), v.getUint8(off + 2), v.getUint8(off + 3));
+        const size = v.getUint32(off + 4, true);
+        if (id === "fmt ") { ch = v.getUint16(off + 10, true); rate = v.getUint32(off + 12, true); bits = v.getUint16(off + 22, true); }
+        if (id === "data") { data = [off + 8, size]; break; }
+        off += 8 + size + (size % 2);
+      }
+      if (!data || bits !== 16) throw new Error("unexpected WAV format");
+      const n = Math.floor(data[1] / 2 / ch), out = new Float32Array(n);
+      for (let i = 0; i < n; i++) out[i] = v.getInt16(data[0] + i * 2 * ch, true) / 32768;
+      return { data: out, rate, dur: n / rate };
+    }));
+  }
+  return pcms.get(name);
+}
+
+// ------------------------------------------------------------------ data
+async function load() {
+  ITEMS = (await (await fetch("/api/items")).json()).tasks;
+  ANSWERS = await (await fetch("/api/answers")).json();
+  for (const t of TASKS) pos[t.key] = firstUndone(t.key);
+  renderTabs(); show(task);
+}
+const list = t => ITEMS[t] || [];
+const answer = (t, id) => (ANSWERS[t] || {})[id];
+const done = t => list(t).filter(x => answer(t, x.id)).length;
+function firstUndone(t) { const i = list(t).findIndex(x => !answer(t, x.id)); return i < 0 ? 0 : i; }
+async function save(ans) {
+  const it = list(task)[pos[task]];
+  const r = await fetch("/api/answer", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ task, id: it.id, answer: ans }) });
+  if (!r.ok) { toast("儲存失敗，請再試一次"); return false; }
+  (ANSWERS[task] = ANSWERS[task] || {})[it.id] = ans;
+  renderTabs(); toast("已儲存"); return true;
+}
+function go(delta) { const n = list(task).length; if (!n) return; pos[task] = Math.min(n - 1, Math.max(0, pos[task] + delta)); show(task); }
+async function saveAndNext(ans) { if (await save(ans)) { if (pos[task] < list(task).length - 1) go(1); else { show(task); toast("這一項全部完成"); } } }
+
+// ------------------------------------------------------------------ chrome
+function renderTabs() {
+  const nav = document.getElementById("tabs"); nav.innerHTML = "";
+  for (const t of TASKS) {
+    if (!list(t.key).length) continue;
+    const b = document.createElement("button");
+    b.className = t.key === task ? "active" : "";
+    b.innerHTML = `${t.name}<span class="count">${done(t.key)}／${list(t.key).length}</span>`;
+    b.onclick = () => { task = t.key; renderTabs(); show(task); };
+    nav.appendChild(b);
+  }
+  const n = list(task).length;
+  document.getElementById("progress").style.width = n ? (100 * done(task) / n) + "%" : "0";
+}
+function toast(msg) { const t = document.getElementById("toast"); t.textContent = msg; t.classList.add("show"); clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove("show"), 1200); }
+function head(it) {
+  const n = list(task).length, a = answer(task, it.id);
+  const where = it.session ? `場次 ${it.session}，第 ${it.pos} 句　` : "";
+  return `<div class="itemhead"><div>${where}第 ${pos[task] + 1}／${n} 段　代號 <span class="code">${it.id}</span>
+    ${a ? '　<span class="saved">✓ 已儲存</span>' : ""}</div>
+    <div class="row" style="margin:0"><button class="btn" id="prev">◀ 上一段</button>
+    <button class="btn" id="next">下一段 ▶</button><button class="btn" id="undone">跳到未完成</button></div></div>`;
+}
+function wireNav() {
+  document.getElementById("prev").onclick = () => go(-1);
+  document.getElementById("next").onclick = () => go(1);
+  document.getElementById("undone").onclick = () => { pos[task] = firstUndone(task); show(task); };
+}
+let keyHandler = null;
+function show(t) {
+  const meta = TASKS.find(x => x.key === t);
+  document.getElementById("helpTitle").textContent = `怎麼做：${meta.name}`;
+  document.getElementById("helpBody").innerHTML = meta.help;
+  renderTabs();
+  const work = document.getElementById("work");
+  keyHandler = null;
+  if (!list(t).length) { work.innerHTML = '<div class="empty">這一項沒有要檢查的片段。</div>'; return; }
+  const it = list(t)[pos[t]];
+  ({ mfa: viewMfa, speaker: viewChoice, echo: viewEcho, a12: viewA12, transcribe: viewTranscribe })[t](work, it);
+  wireNav();
+}
+document.addEventListener("keydown", e => { if (keyHandler) keyHandler(e); });
+
+// ------------------------------------------------------------------ task: syllable alignment
+// One judgement per utterance (D13): play it and watch each character light up over the
+// stretch the aligner gave it. If the lights follow the voice, the alignment is roughly
+// right; if they run early, late or bunch up, it is wrong. Dragging every boundary to a
+// millisecond was the audit's full check and proved too much work for one person.
+const MFA_CHOICES = [["aligned", "大致對"], ["misaligned", "明顯切錯"], ["cannot", "聽不清楚"]];
+let mfaToken = 0;
+async function viewMfa(work, it) {
+  const token = ++mfaToken;
+  const prev = answer("mfa", it.id);
+  const chosen = prev ? (prev.status === "ok" ? "aligned" : prev.status) : null;
+  const B = it.boundaries;
+  work.innerHTML = head(it) + `
+    <div id="strip" style="display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 12px"></div>
+    <canvas id="ov" width="1100" height="150"></canvas>
+    <div class="row">
+      <button class="btn primary" id="play"><kbd>空白</kbd>播放</button>
+      <button class="btn" id="slow"><kbd>S</kbd>慢速播放</button>
+      <span class="hint">字會在電腦認為它出現的時間亮起來</span>
+    </div>
+    <div class="row">${choiceButtons(MFA_CHOICES, chosen)}</div>`;
+  const strip = document.getElementById("strip");
+  it.syllables.forEach((s, i) => {
+    const el = document.createElement("span");
+    el.textContent = s.text || "·"; el.dataset.i = i;
+    el.style.cssText = "font-size:28px;padding:2px 10px;border-radius:8px;border:1px solid var(--line);background:#fff;transition:background .05s";
+    strip.appendChild(el);
+  });
+  const cv = document.getElementById("ov"), g = cv.getContext("2d"), W = cv.width, H = cv.height;
+  const img = new Image(); img.src = "/clip/" + it.png;
+  const { data, rate, dur } = await pcm(it.clip);
+  let peak = 1e-6; for (let i = 0; i < data.length; i += 5) peak = Math.max(peak, Math.abs(data[i]));
+  const X = t => t / dur * W;
+  const cols = new Float32Array(W * 2);
+  for (let x = 0; x < W; x++) {
+    let lo = 0, hi = 0;
+    const a = Math.floor(x / W * data.length), b = Math.floor((x + 1) / W * data.length);
+    for (let i = a; i < b; i++) { if (data[i] < lo) lo = data[i]; if (data[i] > hi) hi = data[i]; }
+    cols[2 * x] = lo; cols[2 * x + 1] = hi;
+  }
+  const active = t => t == null ? -1 : it.syllables.findIndex(s => B[s.a] <= t && t < B[s.b]);
+  function draw(t) {
+    g.clearRect(0, 0, W, H);
+    if (img.complete && img.naturalWidth) g.drawImage(img, 0, 0, W, H);
+    g.strokeStyle = "rgba(37,99,235,.35)"; g.beginPath();
+    const mid = H / 2, amp = H / 2 * 0.9 / peak;
+    for (let x = 0; x < W; x++) { g.moveTo(x + .5, mid - cols[2 * x + 1] * amp); g.lineTo(x + .5, mid - cols[2 * x] * amp); }
+    g.stroke();
+    const on = active(t);
+    it.syllables.forEach((s, i) => {
+      const x0 = X(B[s.a]), x1 = X(B[s.b]);
+      g.fillStyle = i === on ? "rgba(194,65,12,.55)" : (i % 2 ? "rgba(194,65,12,.18)" : "rgba(13,148,136,.20)");
+      g.fillRect(x0, 0, Math.max(1, x1 - x0), H);
+    });
+    if (t != null) { g.fillStyle = "#b91c1c"; g.fillRect(X(t) - 1, 0, 2, H); }
+    strip.querySelectorAll("span").forEach(el => {
+      const lit = +el.dataset.i === on;
+      el.style.background = lit ? "#c2410c" : "#fff"; el.style.color = lit ? "#fff" : "";
+    });
+  }
+  img.onload = () => draw(null); draw(null);
+  function animate() {
+    if (token !== mfaToken) return;
+    const t = playhead(it.clip);
+    draw(t);
+    if (t != null) requestAnimationFrame(animate);
+  }
+  const start = r => { play(it.clip, 0, null, r).then(() => requestAnimationFrame(animate)); };
+  document.getElementById("play").onclick = () => start(1);
+  document.getElementById("slow").onclick = () => start(0.6);
+  work.querySelectorAll("[data-v]").forEach(b => b.onclick = () => saveAndNext({ status: b.dataset.v }));
+  keyHandler = e => {
+    if (e.key === " ") { e.preventDefault(); start(1); }
+    else if (e.key === "s" || e.key === "S") start(0.6);
+    else { const i = parseInt(e.key, 10); if (i >= 1 && i <= MFA_CHOICES.length) saveAndNext({ status: MFA_CHOICES[i - 1][0] }); }
+  };
+  if (actx) start(1);
+}
+
+// ------------------------------------------------------------------ task: who is speaking
+function choiceButtons(options, chosen, keyPrefix = "") {
+  return options.map(([v, label], i) =>
+    `<button class="btn choice ${chosen === v ? "chosen" : ""}" data-v="${v}"><kbd>${keyPrefix}${i + 1}</kbd>${label}</button>`).join("");
+}
+function viewChoice(work, it) {
+  const prev = answer("speaker", it.id);
+  work.innerHTML = head(it) + `
+    <div class="row"><button class="btn primary" id="play"><kbd>空白</kbd>播放</button>
+    <span class="hint">長度 ${it.dur.toFixed(1)} 秒</span></div>
+    <div class="row">${choiceButtons(SPEAKERS, prev && prev.speaker)}</div>`;
+  document.getElementById("play").onclick = () => play(it.clip);
+  work.querySelectorAll("[data-v]").forEach(b => b.onclick = () => saveAndNext({ speaker: b.dataset.v }));
+  keyHandler = e => {
+    if (e.key === " ") { e.preventDefault(); play(it.clip); }
+    const i = parseInt(e.key, 10); if (i >= 1 && i <= SPEAKERS.length) saveAndNext({ speaker: SPEAKERS[i - 1][0] });
+  };
+  if (actx) play(it.clip);
+}
+
+// ------------------------------------------------------------------ task: blind transcription of echoes
+function viewEcho(work, it) {
+  const prev = answer("echo", it.id) || {};
+  work.innerHTML = head(it) + `
+    <div class="row"><button class="btn primary" id="play"><kbd>Esc</kbd>播放</button>
+    <label class="hint"><input type="checkbox" id="unclear" ${prev.unclear ? "checked" : ""}> 聽不清楚</label></div>
+    <input type="text" id="txt" placeholder="孩子說的話（只寫聽到的字）" autocomplete="off">
+    <div class="row"><button class="btn primary" id="ok"><kbd>Enter</kbd>儲存並下一段</button></div>`;
+  const txt = document.getElementById("txt"); txt.value = prev.text || ""; txt.focus();
+  const submit = () => saveAndNext({ text: txt.value.trim(), unclear: document.getElementById("unclear").checked });
+  document.getElementById("play").onclick = () => play(it.clip);
+  document.getElementById("ok").onclick = submit;
+  keyHandler = e => {
+    if (e.isComposing) return;
+    if (e.key === "Escape") { e.preventDefault(); play(it.clip); }
+    else if (e.key === "Enter") { e.preventDefault(); submit(); }
+  };
+  if (actx) play(it.clip);
+}
+
+// ------------------------------------------------------------------ task: loudness source
+function viewA12(work, it) {
+  const prev = answer("a12", it.id) || {};
+  work.innerHTML = head(it) + `
+    <div class="row"><button class="btn" id="ref"><kbd>A</kbd>參考：同一個孩子平常音量的一句</button>
+    <button class="btn primary" id="tgt"><kbd>空白</kbd>要判斷的這句</button></div>
+    <div class="row">${choiceButtons(A12, prev.judgement)}</div>
+    <input type="text" id="note" placeholder="備註（可不填）" autocomplete="off" style="font-size:15px">`;
+  const note = document.getElementById("note"); note.value = prev.note || "";
+  const pick = v => saveAndNext({ judgement: v, note: note.value.trim() });
+  document.getElementById("ref").onclick = () => play(it.ref);
+  document.getElementById("tgt").onclick = () => play(it.clip);
+  work.querySelectorAll("[data-v]").forEach(b => b.onclick = () => pick(b.dataset.v));
+  keyHandler = e => {
+    if (document.activeElement === note) { if (e.key === "Enter" && !e.isComposing) note.blur(); return; }
+    if (e.key === " ") { e.preventDefault(); play(it.clip); }
+    else if (e.key === "a" || e.key === "A") play(it.ref);
+    const i = parseInt(e.key, 10); if (i >= 1 && i <= A12.length) pick(A12[i - 1][0]);
+  };
+}
+
+// ------------------------------------------------------------------ task: second transcription
+function viewTranscribe(work, it) {
+  const prev = answer("transcribe", it.id) || {};
+  let speaker = prev.speaker || null, unclear = !!prev.unclear;
+  work.innerHTML = head(it) + `
+    <div class="row"><button class="btn primary" id="play"><kbd>Esc</kbd>再聽一次</button>
+    <button class="btn" id="before"><kbd>Shift+Esc</kbd>聽前面 4 秒</button>
+    <span class="hint">長度 ${it.dur.toFixed(1)} 秒</span></div>
+    <div class="row" id="spk">${choiceButtons(SPEAKERS, speaker, "Alt+")}
+      <button class="btn choice ${unclear ? "chosen" : ""}" id="unc"><kbd>Alt+0</kbd>聽不清楚</button></div>
+    <input type="text" id="txt" placeholder="這一句說了什麼（只寫聽到的字）" autocomplete="off">
+    <div class="row"><button class="btn primary" id="ok"><kbd>Enter</kbd>儲存並下一句</button></div>`;
+  const txt = document.getElementById("txt"); txt.value = prev.text || ""; txt.focus();
+  const mark = () => {
+    work.querySelectorAll("#spk [data-v]").forEach(b => b.classList.toggle("chosen", b.dataset.v === speaker));
+    document.getElementById("unc").classList.toggle("chosen", unclear);
+  };
+  const choose = v => { speaker = v; mark(); txt.focus(); };
+  const submit = () => {
+    if (!speaker) { toast("請先選擇說話的人"); return; }
+    saveAndNext({ speaker, text: txt.value.trim(), unclear });
+  };
+  document.getElementById("play").onclick = () => play(it.clip);
+  document.getElementById("before").onclick = () => play(it.ctx);
+  document.getElementById("unc").onclick = () => { unclear = !unclear; mark(); txt.focus(); };
+  work.querySelectorAll("#spk [data-v]").forEach(b => b.onclick = () => choose(b.dataset.v));
+  document.getElementById("ok").onclick = submit;
+  keyHandler = e => {
+    if (e.isComposing) return;
+    if (e.key === "Escape") { e.preventDefault(); if (e.shiftKey) document.getElementById("before").click(); else play(it.clip); }
+    else if (e.altKey && /^[0-5]$/.test(e.key)) { e.preventDefault(); if (e.key === "0") { unclear = !unclear; mark(); } else choose(SPEAKERS[+e.key - 1][0]); }
+    else if (e.key === "Enter") { e.preventDefault(); submit(); }
+  };
+  if (actx) play(it.clip);
+}
+
+document.addEventListener("click", () => ctx(), { once: true });
+document.addEventListener("keydown", () => ctx(), { once: true });
+load();
+</script>
+</body>
+</html>
