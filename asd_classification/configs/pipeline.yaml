@@ -1,0 +1,299 @@
+# pipeline.yaml -- frozen pipeline configuration.
+# Audit P0-4: pooling statistics / thresholds / n-gram parameters are written down here and
+# are never tuned after seeing results.
+
+# ---------------------------------------------------------------- synthetic corpus (M1)
+synth:
+  n_subjects: 12
+  asd_ratio: 0.5              # 6 / 6
+  turns_per_subject: 60       # examiner + child turns combined
+  seed: 20260824
+  signal_strength: 1.0        # s = 0 -> the two groups are drawn from IDENTICAL distributions
+  sample_rate: 16000
+
+  audio:
+    f0_child_range: [180.0, 420.0]     # inside the mandatory 100-600 Hz child band
+    f0_examiner_range: [95.0, 175.0]
+    n_harmonics: 16
+    noise_level: 0.02
+    syllable_duration_mean: 0.22       # seconds
+    render_examiner_audio: true
+
+  # Injected ASD-vs-control shift at s = 1.0, in latent z units. Directions follow the task spec.
+  injections:
+    rhythm_variability: 0.9        # up   -> nPVI up
+    pause_anomaly: 0.9             # up   -> pause count / length up
+    response_latency: 1.0          # up
+    echolalia_similarity: 1.2      # up   -> child copies the examiner's previous sentence
+    topic_relevance: -1.0          # down -> G1 answers off topic
+    residual_f0_sd: 0.8            # NO preset direction for the mean, see QUESTIONS Q10
+    stereotyped_rate: 1.1          # F3
+    embedding_variance: 1.0        # B7 cartoon voice
+    volume_following: -1.0         # A12 down
+    multiturn_adaptation: -0.9     # F7 down
+    # F8 bidirectional asymmetry is NOT injected: it emerges because the examiner reacts to
+    # the child (QUESTIONS Q11). Injecting it directly would mean injecting examiner-side
+    # leakage, which would make the examiner probe fire by construction.
+
+  residual_f0_mean_sign: random    # sign drawn from the dataset seed, never preset
+  examiner_leak_strength: 0.0      # QUESTIONS Q11: 0 = examiner reacts to the child only
+
+  ados:
+    items: [A2, A3, A4, A8, OQR]   # OQR is generated but excluded from the primary family
+    target_spearman: 0.7
+    ordinal_levels: 4              # 0-3
+
+# ---------------------------------------------------------------- real data intake
+# Frozen cleaning rules for the clinic's transcript export (audit P0-1, P0-2).
+# Applied identically to every case; never adjusted per file.
+realdata:
+  root: "D:/自閉症/data/Fine_tune"
+  cohort: "TD"                   # community typically-developing, NOT the study control group
+  exclude_cases:                 # transcripts with known unresolved defects
+    - "TDX01"
+    - "TDX02"
+  overlap_policy: drop_both      # drop_both | drop_later | mark
+  overlap_tolerance_s: 0.02      # below this a "overlap" is boundary rounding, not speech
+  drop_third_party: true         # 個管師 / 家長 / 廣播 / Unknown
+  # [UNINTELLIGIBLE] exists only in the ASD transcripts; the TD annotators recorded
+  # the same vocalisations as silence. Excluded so the two cohorts are counted
+  # alike -- see realdata.py. Set false only if both arms are ever re-annotated
+  # to a single protocol.
+  drop_unintelligible: true
+  # Source normalization (src/asdpipe/normalize.py), applied identically to every cohort
+  # before feature extraction. Health check 0930 P1-P4: transcript conventions alone moved
+  # 31/98 features by >= 0.5 SD on TD. Gate: decision_rules.yaml convention_invariance_gate.
+  normalize:
+    enabled: true
+    merge_gap_s: 1.5            # the RuleStitch rule -- idempotent on ASD, applied to TD
+    voice_over_floor_db: 6.0    # voicing = frame energy this far above the session floor
+    voice_min_run_s: 0.096      # 3 x 32 ms frames: a click in the silence is not an onset
+    voice_min_keep_s: 0.10      # below this the trim is not trusted; keep the original span
+    voice_search_back_s: 2.0    # >= the widest gap any pipeline stitched over (gate: 2.0 s)
+  min_qa_pairs: 10               # audit P0-2: below this the subject is low-reliability
+  min_open_qa_pairs: 10          # audit P0-F1: G1 needs open-ended pairs specifically
+
+# ---------------------------------------------------------------- feature extraction (M2)
+features:
+  b_stream:
+    opensmile_feature_set: eGeMAPSv02
+    ecapa_window_s: 3.0
+    ecapa_hop_s: 1.5
+    ecapa_min_windows: 15          # audit P0-F4
+    snr_floor_db: 15.0             # audit P1-5
+    # Audit P1-5 says CPP is for "sustained vowels / stable voiced segments". Gating and
+    # measuring on the whole turn instead mixes in breath and silence and pushed 57% of
+    # child turns below the floor on real recordings.
+    cpp_on_voiced_segments: true
+    cpp_min_voiced_run_s: 0.06
+
+  c_stream:
+    f0_min_hz: 100.0               # HARD REQUIREMENT, audit P1-3 / section 9.2.1
+    f0_max_hz: 600.0
+    f0_hop_s: 0.01
+    tone_template: per_subject     # DEVIATIONS D3
+    pause_threshold_s: 0.20        # audit P1-2
+    pause_sensitivity_s: [0.15, 0.30]
+    syllable_feature_dim: 8        # QUESTIONS Q16; was 11 before the residual-F0 channels were dropped
+    # A multi-second "syllable" is an alignment artefact (a stretched vowel where the
+    # transcript is far shorter than the audio), not speech. Measured on real data:
+    # 1.35% of syllables, but enough to push the duration CV above 2.
+    syllable_duration_bounds: [0.05, 1.0]
+    # Utterance = syllables no more than this far apart, bounded by the first and last
+    # syllable. Equals realdata.normalize.merge_gap_s (the RuleStitch rule) on purpose.
+    utterance_gap_s: 1.5
+    # Utterance-level intonation (assessment sheet A2/A3/B2/B5). This cut-off is ABSOLUTE
+    # and declared before any fit -- R3 forbids deriving it from cohort quantiles, and the
+    # E stream already had to be repaired for exactly that mistake. B1 and B3 were dropped
+    # after failing split-half reliability; see features/intonation.py for the numbers.
+    intonation:
+      exaggerated_range_st: 12.0    # B2: over an octave of excursion in one utterance
+
+  e_stream:
+    min_answer_chars: 2            # audit P0-F1
+    ngram_range: [2, 5]            # audit P0-F3
+    ngram_min_repeats: 3
+    f7_windows: [3, 5, 7]          # audit P0-F7: all three, never just 5
+    # Absolute, frozen thresholds. A per-subject quantile is self-referential: "the share
+    # of my pairs above my own 75th percentile" is 0.25 for everyone. Values were fixed
+    # after looking at the TD cohort's pair-level distribution (there is no second group,
+    # so no group comparison informed them) and are frozen before any group analysis.
+    f1_high_similarity_threshold: 0.80
+    # Assessment-sheet E5/F2/F4/F7 substitutes (features/e_clinical.py). Absolute constants,
+    # never cohort quantiles -- same R3 rule that the intonation cut-offs follow.
+    clinical:
+      f2_min_lag_turns: 20          # below this it is conversational repair, not echolalia
+      f2_similarity_threshold: 0.80 # same bar as F1, so the two are comparable
+      f2_min_chars: 4               # "對" repeated forty times is a token, not an echo   # near-verbatim repetition of the prompt
+    g1_low_similarity_threshold: 0.20    # clearly unrelated answer
+    exclude_yes_no_questions: true # audit P0-F1
+    exclude_verbatim_echo_overlap: 0.80  # DEVIATIONS D7: verbatim echoes belong to F1, not G1
+    min_pairs_per_subject: 10
+    a12_min_pairs: 15              # audit P0-F5: a regression slope needs >= 15 pairs
+
+  stream_assignment:
+    volume_following: e            # DEVIATIONS D2
+    response_latency: e
+
+  # Untranscribed child vocalisation (features/vocal.py, 2026-10). Detector settings are
+  # source normalization's. margin, floor and response_window_s are calibrated on TD alone
+  # by `vocal-calibrate` and written here before any ASD session is scored.
+  vocal:
+    voice_over_floor_db: 6.0
+    voice_min_run_s: 0.096
+    merge_gap_s: 0.25            # sounds this close together are one vocalisation
+    min_segment_s: 0.3           # shorter is too little audio for a voiceprint
+    min_enroll_windows: 2        # 3 s ECAPA windows of the speaker's transcribed speech
+    # Calibrated 2026-10-12 on TD alone (vocal-calibrate, outputs/vocal_calibration.md),
+    # before any ASD session was scored. Recall on TD child pieces 53.7% at 5.0% examiner
+    # false acceptance; whether the voiceprint rule stays is still open (diarization model).
+    response_window_s: 3.52      # 95th percentile of TD response latency (1,019 Q-A pairs)
+    margin: 0.1798               # <= 5% of TD examiner speech taken as child
+    floor: 0.0925                # 5th percentile of TD child similarity to own voiceprint
+
+  # Health check P12. A statistic that cannot be computed, or is computed from too little
+  # data, is NaN ("cannot be measured") -- never 0, which ranked a child who barely spoke as
+  # an extreme value. Counts and per-minute rates keep their real zeros. Pair-based E
+  # features use e_stream.min_pairs_per_subject and B7 uses b_stream.ecapa_min_windows,
+  # both audited minimums; everything else uses the floor below, fixed 2026-10-01 before
+  # any feature was recomputed under it.
+  min_data:
+    values_per_statistic: 5       # utterances, pauses, syllables, frames, words, turns
+
+  functionals:
+    full: [mean, std, p25, median, p75]
+    b0_reduced: [mean, std]        # DEVIATIONS D5, keeps B0 inside the 36-66 dim budget
+
+  b0:
+    use_full_set: false
+    target_dim_range: [36, 66]
+
+# ---------------------------------------------------------------- models / backends
+models:
+  profile: smoke                 # smoke | real
+  smoke:
+    sbert: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2   # R4 lightweight alternative
+    ecapa: speechbrain/spkrec-ecapa-voxceleb
+    ckip_ws: ckiplab/bert-base-chinese-ws
+    crepe_model: tiny            # torchcrepe: tiny | full
+  real:
+    sbert: sentence-transformers/paraphrase-multilingual-mpnet-base-v2   # R4 primary
+    ecapa: speechbrain/spkrec-ecapa-voxceleb
+    ckip_ws: ckiplab/bert-base-chinese-ws
+    crepe_model: full
+
+  # R4 origin compliance. Every entry must be non-China-origin.
+  origin:
+    sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2: "UKP Lab / SBERT (Germany)"
+    sentence-transformers/paraphrase-multilingual-mpnet-base-v2: "UKP Lab / SBERT (Germany)"
+    speechbrain/spkrec-ecapa-voxceleb: "SpeechBrain academic consortium"
+    ckiplab/bert-base-chinese-ws: "Academia Sinica CKIP (Taiwan), word-seg model only, see QUESTIONS Q12"
+    torchcrepe: "CREPE, NYU (USA)"
+    librosa-pyin: "librosa (USA)"
+    praat-parselmouth: "University of Amsterdam (NL)"
+    opensmile: "audEERING (Germany)"
+    facebook/wav2vec2-xls-r-300m: "Meta (USA), D benchmark arm only"
+
+  banned_substrings: [text2vec, bge-, chinese-hubert, childmandarin, tencentgamemate, shibing624, "baai/"]
+
+  mfa:                            # QUESTIONS Q14 -- decided 2026-08-25, see outputs/alignment_report.md
+    acoustic_model: mandarin_mfa            # v3.0.0
+    dictionary: mandarin_taiwan_mfa         # v3.0.0; this cohort is Taiwan Mandarin
+    cross_check_dictionary: mandarin_china_mfa   # second opinion, for the error bound
+    g2p_model: "C:/Users/User/Documents/MFA/pretrained_models/g2p/mandarin_taiwan_mfa.zip"
+    binary: "D:/Anaconda/envs/mfa/Scripts/mfa.exe"   # MFA lives in its own conda env
+    dictionary_dir: "C:/Users/User/Documents/MFA/pretrained_models/dictionary"
+    num_jobs: 8
+    # Measured on a real case: the default beam of 10 aligned only 79% of child turns and
+    # recovered 50% of the characters, and the failures were systematically the LONG
+    # utterances -- exactly the ones the C stream needs (audit P1-2 wants >= 10 syllables
+    # for nPVI). beam 40 -> 99%/90%, beam 100 -> 100%/98%, at the same wall-clock cost.
+    beam: 100
+    fine_tune: true               # refines boundaries at a smaller frame shift; free here
+    spotcheck_per_case: 8         # audit P1-1 wants 30-50 segments in total
+
+  d_arm:                          # milestone M8, interface only in the smoke stage
+    enabled: false
+    backbone: facebook/wav2vec2-xls-r-300m
+    layer: 12                     # pre-selected from probing priors, frozen after Phase 0
+    pca_dim: 20
+
+# ---------------------------------------------------------------- nested CV (M4)
+cv:
+  outer:
+    n_folds: 3
+    seeds: [0, 1]                 # smoke only; real data uses cv.real below
+    stratify_by: [label]          # real data adds age band / sex
+    unit: subject                 # R2
+  inner:
+    n_folds: 3
+  # Real recordings (health check P19): registration asks for >= 5 seeds (plan doc 5.7)
+  # and audit P1-9 for repeated stratified 5-fold or LOSO. Each seed is one repetition of
+  # the 5-fold split. run_cv(real=True) reads this block and refuses anything smaller.
+  real:
+    n_folds: 5
+    seeds: [0, 1, 2, 3, 4]
+
+  m1:
+    tcn_channels: 64
+    tcn_layers: 4
+    tcn_dilations: [1, 2, 4, 8]
+    tcn_kernel_size: 3
+    mlp_hidden: 64
+    dropout: 0.2
+    lr: 0.001
+    weight_decay: 0.01
+    max_epochs: 200
+    patience: 20
+    batch_size: 8
+
+  baselines:
+    b0: {estimator: logistic_l2, C_grid: [0.01, 0.1, 1.0, 10.0]}
+    b1: {per_stream_estimator: logistic_l2, fusion_l2: 1.0}
+    b2: {estimator: shrinkage_lda}
+
+# ---------------------------------------------------------------- S2 / S3 validation
+validate:
+  null_check:                     # S2, see DEVIATIONS D1
+    n_seeds: 25
+    signal_strength: 0.0
+    mean_auc_band: [0.3, 0.7]
+    alpha: 0.05                   # one-sided binomial test against the theoretical tail
+                                  # rate implied by the null AUC SD (DEVIATIONS D1)
+    n_subjects: 12
+    turns_per_subject: 40
+  sweep:                          # S3
+    signal_strengths: [0.0, 0.5, 1.0, 2.0, 3.0]
+    n_seeds: 3
+    n_subjects: 12
+    turns_per_subject: 60
+    min_trend_rho: 0.80           # Spearman(s, AUC); adjacent-pair tolerance tests noise
+    final_auc_min: 0.85           # judged on the linear baselines and the delivered model
+  examiner_leak_positive_control:  # QUESTIONS Q11
+    enabled: true
+    examiner_leak_strength: 3.0
+    n_seeds: 3
+
+# ---------------------------------------------------------------- analysis (M7)
+analysis:
+  n_permutations: 5000            # examiner probe, audit P0-0C
+  n_bootstrap: 10000
+  spearman_bootstrap: 10000
+
+# ---------------------------------------------------------------- segment attention model (asdpipe.mil)
+# Fixed in advance (2026-11-01); values mirror research_plan_1030.md 3.5. Study design:
+# DEVIATIONS D17. Any later change is recorded in DEVIATIONS (research plan, section 5, rule 2).
+mil:
+  max_gap_s: 10.0
+  segment_length: 5
+  sensitivity_lengths: [3, 7]
+  # gate_lambda 0.05 -> 0.02 on synthetic data only (Task 4 calibration, DEVIATIONS D17)
+  model: {hidden: 8, epochs: 300, lr: 0.01, weight_decay: 1.0e-4,
+          gate_sigma: 0.5, gate_init: 0.5, gate_lambda: 0.02}
+  cv: {n_folds: 5, repeats: 5, seeds: 5}
+  logreg_C: 1.0
+  n_permutations: 1000
+  permutation_seed: 20261101
+  n_boot: 2000
+  chunk_models: 250
+  device: auto            # cuda when available

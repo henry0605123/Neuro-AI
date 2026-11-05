@@ -1,0 +1,184 @@
+# decision_rules.yaml
+# R5 requires this file to exist BEFORE any real training run.
+# Frozen 2026-08-24. Changing it after seeing results invalidates the analysis (audit P0-4).
+
+meta:
+  frozen_at: "2026-08-24"
+  authority: "docs/ASD分類研究計畫書.md 5.0.2 / 4b.2 / 6.2 ; audit P0-4, P1-11"
+  note: "Phase 0 smoke stage on synthetic data. No real subject data is involved."
+
+# SUPERSEDED by DEVIATIONS D17 (2026-11-01); value kept as the historical record.
+primary_model: M1            # C-stream TCN + B/E statistical pooling -> concat -> MLP(64)
+mandatory_baselines: [B0, B1, B2]
+
+# SUPERSEDED by DEVIATIONS D17 (2026-11-01); value kept as the historical record.
+comparison:
+  test: paired_bootstrap     # subject-level AUC, resample subjects
+  n_boot: 10000
+  alpha: 0.05
+  same_split: true           # identical outer folds for every model
+  same_seeds: true           # identical seed list for every model
+  report_non_significant: true
+
+# SUPERSEDED by DEVIATIONS D17 (2026-11-01); value kept as the historical record.
+# R5 honesty clause -- written down BEFORE training, not decided after seeing results.
+honesty_clause:
+  rule: "If M1 is NOT significantly better than BOTH B0 and B1 under the paired bootstrap, the delivered model is a baseline."
+  delivered_when_m1_wins: M1
+  delivered_when_m1_ties: B1     # first fallback; if B1 collapses (unstable c_s > 0.9) -> B0
+  fallback_chain: [M1, B1, B0]
+  must_publish_null_result: true
+
+mde_disclosure:
+  statement: "A non-significant result means 'gain < MDE', not 'gain = 0'."
+  reference_points:
+    - {n_subjects: 100, score_corr: 0.90, delta_auc: 0.07}
+    - {n_subjects: 100, score_corr: 0.70, delta_auc: 0.10}
+  smoke_note: "At n=12 the MDE is far larger; the smoke run reports it empirically."
+
+overfit_guards:               # section 5.7, audit P1-11 -- all mandatory to report
+  dropout_range: [0.1, 0.3]
+  weight_decay: true
+  early_stopping: inner_fold_only    # NEVER the outer test fold
+  n_seeds_min_real: 5
+  report_cross_seed_sd: true
+
+criterion_validity:           # Phase 0 primary analysis, section 4b.2
+  # AMENDED 2026-09-12. F7 (多輪語意調適, window-5 slope) was removed from the family after
+  # a floor effect measured on the 19 TD subjects: slope median about -0.0002, positive for
+  # only 4 of 19 (sign test p = 0.019), and the three windows correlate 0.993/0.994 so they
+  # were never three independent tests. Section 4b.1 pre-registered exactly this check
+  # ("先檢視對照組分布 ... 此特徵在本年齡層可能不適用。這是要如實報告的發現。").
+  #
+  # Why amending a frozen pre-registration is legitimate here, and the one condition that
+  # makes it so: the cohort has a single group and no diagnostic labels, so no
+  # group-difference or criterion-validity result exists yet and none can have influenced
+  # this. The screening used only reliability and floor-effect evidence computed on control
+  # data. Any further change once labels exist would NOT have that defence.
+  # See DEVIATIONS.md D8.
+  primary_indicator_family_size: 7
+  primary_indicators:
+    G1: similarity_median
+    F1: embed_high_similarity_ratio   # absolute threshold; see pipeline.yaml e_stream
+    F3: repeated_ngram_type_ratio
+    B7: mean_pairwise_cosine_distance
+    A12: regression_slope
+    F8: bidirectional_difference
+    B4: inappropriate_stress_ratio
+  # Candidates added to the pipeline on 2026-09-12 from the clinical assessment sheet
+  # (E5 發聲量, F2 延宕仿說, F4 代名詞反轉, F7-sheet 主動發話少, all rated 高). They are
+  # deliberately NOT in the primary family: promoting an untested feature into the
+  # correction set is a decision for the PI, and the decision_table below is the route.
+  exploratory_candidates: [E5_vocal_rate, F2_delayed_echo, F4_pronoun_reversal,
+                           F7sheet_initiation_ratio]
+  multiple_comparison: holm
+  effect_size_threshold_rho: 0.5      # effect-size threshold, NOT a significance claim
+  ci_lower_bound_threshold: 0.2
+  significance_thresholds_n20:
+    # Recomputed 2026-09-12 by the t-approximation, rho = sqrt(t^2 / (t^2 + n - 2)).
+    # NOTE: the previous entries were 0.454 and (m=8) 0.593, which this method reproduces
+    # as 0.444 and 0.589 -- so they came from some other method that was not recorded. The
+    # gap is about 0.01 and has never mattered, but if it ever does, use the exact
+    # permutation distribution of Spearman's rho rather than either of these.
+    uncorrected: 0.444
+    holm7_first_step: 0.582
+  # SUPERSEDED by DEVIATIONS D17 (2026-11-01); value kept as the historical record.
+  decision_table:
+    - {condition: "rho >= 0.5 and CI excludes 0", verdict: "Phase 1 core feature"}
+    - {condition: "0.3 <= rho < 0.5", verdict: "Phase 1 candidate; review operational definition"}
+    - {condition: "rho < 0.3 and abs(d) >= 0.8", verdict: "WARNING: separates groups but measures something else -- trace confound before keeping"}
+    - {condition: "rho < 0.3 and abs(d) < 0.5", verdict: "demote or drop"}
+  analysis_order: criterion_first_then_group_difference   # audit P0-4, enforced in code
+
+loss:
+  name: class_weighted_cross_entropy
+  focal: false                 # section 5.7: Focal is an ablation only, it breaks calibration
+  class_weight: inverse_prevalence
+
+calibration:
+  method: platt                # fitted inside the training fold only
+  report_brier: true
+
+examiner_probe:                # section 4b.3 / audit P0-0C
+  input: examiner_turns_only
+  n_permutations: 5000
+  interpretation: descriptive  # n~20 has no decisive power; never say "close to random, so we are safe"
+  mandatory_caveat: "interaction features (G1/F1/F7/F8/A12) always carry the 'may contain examiner modulation' note"
+
+leakage_alarm:
+  auc_above: 0.95
+  action: "treat as a confound alarm, not an achievement; trace channel / examiner / module"
+
+# ---------------------------------------------------------------------------------------
+# ADDED 2026-09-30, before any feature computed under source normalization was inspected.
+# Health check 0930, problems P1-P5 and next-step 3.
+#
+# Why. The two arms' transcripts come from different production pipelines (punctuation
+# density 0.61 vs 0.04 per segment; ASD merged at 1.5 s by RuleStitch; speaker-change gaps
+# stitched to exactly 0.000 s in 36-92% of cases) and their audio from different containers
+# (ASD MP4/AAC, TD MP3). Simulated on TD alone, those conventions moved 31 of 98 features by
+# >= 0.5 SD -- the size of the effect the study is trying to detect. A classifier would not
+# need to recognise autism, only which team produced the file.
+#
+# Gate. Every feature is recomputed on TD after each transform below. A feature that moves
+# by >= threshold_sd under ANY transform is excluded from every confirmatory analysis. It
+# may still be reported descriptively, marked as convention-sensitive; it is never silently
+# dropped. The gate uses TD only and no labels.
+convention_invariance_gate:
+  reference_cohort: TD
+  uses_labels: false
+  statistic: "abs(median over subjects of (f_transformed - f_original)) / sd_over_subjects(f_original)"
+  threshold_sd: 0.20
+  transforms:
+    strip_punctuation: "remove every Unicode punctuation and separator character from the text"
+    merge_same_speaker: {max_gap_s: 1.5}        # the RuleStitch rule the ASD transcripts went through
+    stitch_speaker_changes: {max_gap_s: 2.0}    # later turn starts where the earlier one ends
+  format_check:
+    subjects: "every TD case whose folder holds both an .mp3 and an .mp4 of the same session"
+    compares: "features from the .mp3 against features from the .mp4, same transcript"
+    threshold_sd: 0.20
+    note: "only two such cases exist; this is a screen, not an estimate"
+  consequence: "exclude from confirmatory analysis; report descriptively with the transform that failed it"
+  # Outcome, applied as registered (DEVIATIONS D11, PI-confirmed 2026-10-01; re-run after
+  # the step-4 fixes, D12). Read by run.confirmatory_exclusions; every model input drops
+  # these. Re-run the gate and update this list whenever a feature definition changes.
+  outcome:
+    report: outputs/convention_gate.md
+    excluded_from_confirmatory: [b_Loudness_p25, b_spectralFlux_median, b_spectralFlux_p25,
+                                 c_pause_mean_s, c_pause_p90_s, c_pct_v,
+                                 c_pitch_range_st_iqr, c_syl_dur_cv]
+
+# ---------------------------------------------------------------------------------------
+# ADDED 2026-11-01 for the segment-level attention model (asdpipe.mil), written before that
+# model has been run on any ASD data. Study design: research_plan_1030.md. Deviation record:
+# DEVIATIONS D17. This section replaces primary_model, comparison, honesty_clause and
+# criterion_validity.decision_table above, which stay unchanged as the historical record.
+mil_analysis:
+  frozen_at: "2026-11-01"
+  separable_if: "permutation p <= 0.05"   # real AUC above 95% of the label-shuffled AUCs
+  # Interleaved split: a child's turns sorted by time, odd-numbered turns in one half and
+  # even-numbered turns in the other; the examiner's turns are split the same way. Pearson r
+  # between the two halves, across TD children, with no Spearman-Brown correction. This is
+  # the conservative reading: the code behind the older split-half r values was never committed.
+  split_half: {threshold: 0.70, statistic: pearson_odd_even_uncorrected}
+  # Per session, on the first 60 s of child speech: CREPE vs pYIN and CREPE vs Praat must both
+  # agree on MORE than min_agreement of the frames (strict: exactly 0.90 fails, the plan's
+  # "> 90%") with an octave-error rate strictly BELOW max_octave_error (exactly 0.03 fails).
+  # A failing session gets a missing value for A2 and B2; if more than
+  # drop_if_td_fail_share_above of the TD sessions fail, the A2 and B2 columns are left empty.
+  f0_session: {min_agreement: 0.90, max_octave_error: 0.03, drop_if_td_fail_share_above: 0.5}
+  # The per-child tracking-failure ratio on its own must not separate the groups: if its AUC
+  # falls outside auc_keep_range, A2 and B2 leave the model and are only described.
+  f0_group_rule: {feature: c_f0_tracking_failure_ratio, auc_keep_range: [0.30, 0.70]}
+  # Pending the clinician's answer on whether the 2025 (TD) and 2026 (ASD) recording setups
+  # were the same. If they differ, the transcript-only model is the primary one.
+  recording_condition: {pending: true, if_different: transcript_only}
+  unexposed_only_min_asd: 10    # the "drop the 6 exposed ASD" analysis needs >= 10 unexposed ASD
+  # Copied in from outputs/mil_checks.json (proposed_outcome: excluded, source, date, code_hash)
+  # after `mil-checks`, and committed with the freeze; the run reads it and never fills it in.
+  # Filled in by Task 8 on 2026-11-03. date and code_hash are quoted strings.
+  outcome:
+    excluded: [c_exaggerated_utterance_ratio, c_pitch_range_st_median]
+    source: outputs/mil_checks.md
+    date: "2026-11-02"
+    code_hash: "6ecda831edea42999f1c3b69dbf49280ef3be8c5d9e243ffbc2cccf64002149a"
